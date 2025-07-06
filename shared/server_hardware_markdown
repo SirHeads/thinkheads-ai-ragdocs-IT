@@ -1,0 +1,34 @@
+# ThinkHeads.ai Server Hardware Specification
+## Server Name: Proxmox 1
+
+### Hardware Components
+
+| Item | Model | Notes |
+|------|-------|-------|
+| **Case** | Phanteks Ethoo Pro II | 2x 140mm fans included |
+| **Motherboard** | Gigabyte B850 AI TOPP | 2x PCIe 5.0 x16 slots (running x8/x8), 2x NVMe 5.0 x4 directly to CPU |
+| **CPU** | AMD 7600 | Likely to overclock using PBO and undervolting, expecting ~7600X performance |
+| **CPU Cooler** | Stock | |
+| **RAM** | 96 GB DDR5 G.SKILL Flare X5 (2 x 48GB) | 5200 MHz XMP |
+| **NVMe 1 (CPU)** | 2 TB Samsung 990 EVO Plus | PCIe 4.0 x4 |
+| **NVMe 2 (CPU)** | 2 TB Samsung 990 EVO Plus | PCIe 4.0 x4 |
+| **NVMe 3 (Chipset)** | 4 TB Samsung 990 EVO Plus | PCIe 4.0 x4 (via chipset, PCIe 4.0 x2 lanes) |
+| **SATA 1** | 240 GB Crucial BX500 SSD | |
+| **SATA 2** | 240 GB Crucial BX500 SSD | |
+| **GPU 1** | 5060 TI 16 GB ZOTAC Twin Edge OC | PCIe 5.0 x8 |
+| **GPU 2** | 5060 TI 16 GB ZOTAC Twin Edge OC | PCIe 5.0 x8 |
+| **Power Supply** | ASUS TUF Gaming 1200 Watt 80 Plus Gold ATX | 2x 600W GPU connectors available |
+
+### Remaining Open Ports on Motherboard
+- **USB Ports**: Multiple and various USB ports available
+- **SATA Connectors**: 2x SATA connectors available for additional SSD or HDD drives (e.g., for data or backups)
+
+### Expected Upgrade Paths
+- **Case**: Add more fans for improved cooling
+- **CPU**: Potential upgrade to AMD 10950X3D (24 cores, 48 threads, high cache); would require an aftermarket CPU cooler
+- **GPU**: 800W available for GPUs, allowing for higher-end GPUs if undervolted or power-restricted to ~70%. Cost is the primary limiting factor
+- **Drives**: All drives can be upgraded in size or speed (e.g., to PCIe 5.0 x4), though current setup is likely sufficient
+
+### Notes
+- This server, Proxmox 1, is part of the infrastructure for ThinkHeads.ai, supporting both local server operations and future cloud server integration.
+- The hardware is designed for flexibility, with significant room for upgrades in CPU, GPU, and storage to support LLM training, embedding, and RAG workloads.
