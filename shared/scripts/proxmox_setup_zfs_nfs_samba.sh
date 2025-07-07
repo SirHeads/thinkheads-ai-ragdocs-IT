@@ -3,7 +3,7 @@
 # proxmox_setup_zfs_nfs_samba.sh
 # Configures ZFS pools for NVMe drives, sets up NFS and Samba servers, and configures firewall
 # Version: 1.1.0
-# Author: [Your Name]
+# Author: Heads, Grok, Devstral
 # Usage: ./proxmox_setup_zfs_nfs_samba.sh [--username <username>]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 

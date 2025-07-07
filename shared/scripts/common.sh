@@ -3,7 +3,7 @@
 # common.sh
 # Shared functions for Proxmox VE setup scripts
 # Version: 1.1.0
-# Author: [Your Name]
+# Author: Heads, Grok, Devstral
 # Usage: Source this script in other setup scripts to use common functions
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 

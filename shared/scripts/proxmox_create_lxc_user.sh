@@ -1,73 +1,96 @@
 #!/bin/bash
 
 # proxmox_create_lxc_user.sh
-# Creates a Linux user with Samba credentials and NFS access for a container/VM
+# Creates a Linux user with Samba credentials and NFS access for Proxmox LXC containers/VMs
+# Version: 1.1.0
+# Author: Heads, Grok, Devstral
+# Usage: ./proxmox_create_lxc_user.sh [--username <username>]
+# Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
-set -e
-LOGFILE="/var/log/proxmox_setup.log"
-echo "[$(date)] Starting proxmox_create_lxc_user.sh" >> $LOGFILE
+# Source common functions
+source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; exit 1; }
 
-# Function to check if script is run as root
-check_root() {
-  if [[ $EUID -ne 0 ]]; then
-    echo "Error: This script must be run with sudo" | tee -a $LOGFILE
-    exit 1
-  fi
-}
+# Constants
+SERVER_IP="10.0.0.13"
+ZFS_4TB_POOL="shared"
 
-# Prompt for username
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --username)
+      USERNAME="$2"
+      shift 2
+      ;;
+    *)
+      echo "Error: Unknown option $1" | tee -a "$LOGFILE"
+      exit 1
+      ;;
+  esac
+done
+
+# Prompt for username if not provided
 prompt_for_username() {
-  read -p "Enter new username for container/VM: " USERNAME
   if [[ -z "$USERNAME" ]]; then
-    echo "Error: Username cannot be empty" | tee -a $LOGFILE
-    exit 1
+    read -p "Enter new username for container/VM: " USERNAME
   fi
-
-  # Check if user already exists using getent for security reasons
-  if getent passwd "$USERNAME" &>/dev/null; then
-    echo "Warning: User $USERNAME already exists, skipping user creation" | tee -a $LOGFILE
-  else
-    create_user
+  if [[ -z "$USERNAME" ]]; then
+    echo "Error: Username cannot be empty" | tee -a "$LOGFILE"
+    exit 1
   fi
 }
 
-# Create Linux user without home directory or login shell
+# Create Linux user
 create_user() {
-  useradd -M -s /bin/false "$USERNAME"
-  echo "[$(date)] Created Linux user $USERNAME" >> $LOGFILE
+  if getent passwd "$USERNAME" &>/dev/null; then
+    echo "Warning: User $USERNAME already exists, skipping user creation" | tee -a "$LOGFILE"
+    return 0
+  fi
+  retry_command "useradd -M -s /bin/false $USERNAME"
+  echo "[$(date)] Created Linux user $USERNAME" >> "$LOGFILE"
 }
 
 # Get UID for NFS compatibility
 get_uid() {
   UID=$(id -u "$USERNAME")
   if [[ -z "$UID" ]]; then
-    echo "Error: Failed to get UID for $USERNAME" | tee -a $LOGFILE
+    echo "Error: Failed to get UID for $USERNAME" | tee -a "$LOGFILE"
     exit 1
   fi
-  echo "[$(date)] User $USERNAME has UID $UID" >> $LOGFILE
+  echo "[$(date)] User $USERNAME has UID $UID" >> "$LOGFILE"
 }
 
-# Prompt for Samba password
-setup_samba_password() {
-  echo "Setting up Samba password for user '$USERNAME'. Enter a password for Samba access."
-  smbpasswd -a "$USERNAME"
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Set Samba password for user $USERNAME" >> $LOGFILE
+# Verify Samba service
+verify_samba_service() {
+  if ! check_package samba; then
+    echo "Error: Samba is not installed. Run proxmox_setup_zfs_nfs_samba.sh first" | tee -a "$LOGFILE"
+    exit 1
+  fi
+  if ! systemctl is-active --quiet smbd; then
+    retry_command "systemctl start smbd"
+    echo "[$(date)] Started Samba service" >> "$LOGFILE"
   else
-    echo "Error: Failed to set Samba password for $USERNAME" | tee -a $LOGFILE
-    exit 1
+    echo "[$(date)] Samba service is already running" >> "$LOGFILE"
   fi
 }
 
-# Main script execution
+# Setup Samba password
+setup_samba_password() {
+  echo "Setting Samba password for user '$USERNAME'."
+  retry_command "smbpasswd -a $USERNAME"
+  echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
+}
+
+# Main execution
 check_root
 prompt_for_username
+create_user
 get_uid
+verify_samba_service
 setup_samba_password
 
 echo "Setup complete for user '$USERNAME'."
-echo "- Samba access: \\\\10.0.0.13\\<dataset> (use '$USERNAME' and Samba password)"
-echo "- NFS access (in container/VM): mount -t nfs 10.0.0.13:/shared/<dataset> /mnt/<dataset>"
+echo "- Samba access: \\\\$SERVER_IP\\<dataset> (use '$USERNAME' and Samba password)"
+echo "- NFS access: mount -t nfs $SERVER_IP:/$ZFS_4TB_POOL/<dataset> /mnt/<dataset>"
 echo "- UID: $UID (use for container/VM config)"
 echo "Store the Samba password securely."
-echo "[$(date)] Completed proxmox_create_lxc_user.sh" >> $LOGFILE
+echo "[$(date)] Completed proxmox_create_lxc_user.sh" >> "$LOGFILE"

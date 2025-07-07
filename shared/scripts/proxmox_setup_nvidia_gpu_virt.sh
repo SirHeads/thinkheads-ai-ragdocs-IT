@@ -3,7 +3,7 @@
 # proxmox_setup_nvidia_gpu_virt.sh
 # Configures NVIDIA GPU virtualization on Proxmox VE with AMD CPU, using NVIDIA driver 575.57.08 and CUDA 12.9
 # Version: 1.1.0
-# Author: [Your Name]
+# Author: Heads, Grok, Devstral
 # Usage: ./proxmox_setup_nvidia_gpu_virt.sh [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
