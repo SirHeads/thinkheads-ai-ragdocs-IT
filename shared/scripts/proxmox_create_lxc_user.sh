@@ -12,7 +12,7 @@ source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; e
 
 # Constants
 SERVER_IP="10.0.0.13"
-ZFS_4TB_POOL="shared"
+ZFS_4TB_POOL="fastData"
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do

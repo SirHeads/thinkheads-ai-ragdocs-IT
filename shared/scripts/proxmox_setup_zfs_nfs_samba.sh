@@ -11,8 +11,8 @@
 source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; exit 1; }
 
 # Constants
-ZFS_2TB_POOL="tank"
-ZFS_4TB_POOL="shared"
+ZFS_2TB_POOL="quickOS"
+ZFS_4TB_POOL="fastData"
 DEFAULT_USERNAME="heads"
 NFS_SUBNET="10.0.0.0/24"
 EXPORTS_FILE="/etc/exports"
