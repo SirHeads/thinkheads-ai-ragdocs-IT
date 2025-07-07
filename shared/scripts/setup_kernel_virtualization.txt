@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# setup_nvidia_gpu_virt.sh
+# Prepares Proxmox system for virtualization of NVIDIA GPUs on an AMD CPU
+
+set -e
+LOGFILE="/var/log/proxmox_setup.log"
+echo "[$(date)] Starting setup_nvidia_gpu_virt.sh" >> $LOGFILE
+
+# Function to check if script is run as root
+check_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run with sudo" | tee -a $LOGFILE
+    exit 1
+  fi
+}
+
+# Ensure kernel headers are installed for the current kernel version
+install_kernel_headers() {
+  CURRENT_KERNEL=$(uname -r)
+  KERNEL_HEADERS="linux-headers-$CURRENT_KERNEL"
+
+  if ! dpkg -l | grep -q "$KERNEL_HEADERS"; then
+    apt-get update && apt-get install -y $KERNEL_HEADERS
+    echo "[$(date)] Installed kernel headers for current kernel version" >> $LOGFILE
+  else
+    echo "Kernel headers already installed, skipping" | tee -a $LOGFILE
+  fi
+}
+
+# Blacklist the Nouveau driver and set modeset=0
+blacklist_nouveau() {
+  if ! grep -q '^blacklist nouveau' /etc/modprobe.d/blacklist.conf; then
+    echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf
+    echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist.conf
+    echo "[$(date)] Blacklisted Nouveau driver and set modeset=0" >> $LOGFILE
+  else
+    echo "Nouveau driver already blacklisted, skipping" | tee -a $LOGFILE
+  fi
+}
+
+# Add necessary modules to /etc/modules for VFIO pass-through
+add_vfio_modules() {
+  if ! grep -q '^vfio' /etc/modules; then
+    echo "vfio" >> /etc/modules
+    echo "vfio_iommu_type1" >> /etc/modules
+    echo "vfio_pci" >> /etc/modules
+    echo "vfio_virqfd" >> /etc/modules
+    echo "[$(date)] Added VFIO modules to /etc/modules" >> $LOGFILE
+  else
+    echo "VFIO modules already added, skipping" | tee -a $LOGFILE
+  fi
+}
+
+# Update kernel boot parameters for VM IOMMU GPU passthrough and AMD CPU
+update_grub() {
+  GRUB_DEFAULT_FILE="/etc/default/grub"
+  if grep -q "amd_iommu=on" "$GRUB_DEFAULT_FILE"; then
+    echo "IOMMU parameter already set, skipping" | tee -a $LOGFILE
+  else
+    sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT=".*\)"/\1 iommu=pt amd_iommu=on video=vesafb:/' "$GRUB_DEFAULT_FILE"
+    update-grub
+    echo "[$(date)] Updated GRUB configuration for IOMMU and AMD CPU" >> $LOGFILE
+  fi
+}
+
+# Main script execution
+check_root
+install_kernel_headers
+blacklist_nouveau
+add_vfio_modules
+update_grub
+
+echo "Setup complete. Reboot the system to apply changes."
+echo "[$(date)] Completed setup_nvidia_gpu_virt.sh" >> $LOGFILE
