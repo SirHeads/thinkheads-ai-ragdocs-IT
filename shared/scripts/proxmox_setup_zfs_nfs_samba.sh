@@ -2,7 +2,7 @@
 
 # proxmox_setup_zfs_nfs_samba.sh
 # Configures ZFS pools for NVMe drives, sets up NFS and Samba servers, and configures firewall
-# Version: 1.1.0
+# Version: 1.2.0
 # Author: Heads, Grok, Devstral
 # Usage: ./proxmox_setup_zfs_nfs_samba.sh [--username <username>]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -17,57 +17,57 @@ DEFAULT_USERNAME="heads"
 NFS_SUBNET="10.0.0.0/24"
 EXPORTS_FILE="/etc/exports"
 
-# Parse command-line arguments
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --username)
-      USERNAME="$2"
-      shift 2
-      ;;
-    *)
-      echo "Error: Unknown option $1" | tee -a "$LOGFILE"
-      exit 1
-      ;;
-  esac
-done
-
-# Identify NVMe drives
+# Identify NVMe drives using lsblk
 identify_nvme_drives() {
-  NVME0=$(nvme list | grep -m1 "Samsung 990 EVO Plus 2TB" | awk '{print $1}')
-  NVME1=$(nvme list | grep -m2 "Samsung 990 EVO Plus 2TB" | tail -n1 | awk '{print $1}')
-  NVME4TB=$(nvme list | grep "Samsung 990 EVO Plus 4TB" | awk '{print $1}')
+  # List NVMe drives and their sizes
+  mapfile -t NVME_DRIVES < <(lsblk -d -o NAME,SIZE -b | grep '^nvme' | awk '{print $1 " " $2}')
+  
+  # Find 2TB and 4TB drives
+  NVME_2TB=()
+  NVME_4TB=""
+  for drive in "${NVME_DRIVES[@]}"; do
+    name=$(echo "$drive" | awk '{print $1}')
+    size=$(echo "$drive" | awk '{print $2}')
+    # Convert sizes to bytes (2TB ~ 2,000,000,000,000 bytes, 4TB ~ 4,000,000,000,000 bytes)
+    if [[ $size -ge 1900000000000 && $size -le 2100000000000 ]]; then
+      NVME_2TB+=("/dev/$name")
+    elif [[ $size -ge 3900000000000 && $size -le 4100000000000 ]]; then
+      NVME_4TB="/dev/$name"
+    fi
+  done
 
-  if [[ -z "$NVME0" || -z "$NVME1" || -z "$NVME4TB" ]]; then
-    echo "Error: Could not identify NVMe drives. Ensure drives are connected and visible via 'nvme list'" | tee -a "$LOGFILE"
+  # Validate: Expect exactly two 2TB drives and one 4TB drive
+  if [[ ${#NVME_2TB[@]} -ne 2 || -z "$NVME_4TB" ]]; then
+    echo "Error: Expected two 2TB NVMe drives and one 4TB NVMe drive. Found ${#NVME_2TB[@]} 2TB drives and ${NVME_4TB:+1}${NVME_4TB:-0} 4TB drive(s)." | tee -a "$LOGFILE"
     exit 1
   fi
-  echo "[$(date)] Identified NVMe drives: $NVME0, $NVME1 (2TB), $NVME4TB (4TB)" >> "$LOGFILE"
+  echo "[ Eng$(date)] Identified NVMe drives: ${NVME_2TB[0]}, ${NVME_2TB[1]} (2TB), $NVME_4TB (4TB)" >> "$LOGFILE"
 }
 
 # Create ZFS mirror for 2TB NVMe drives
 create_zfs_mirror() {
   if ! zpool list | grep -q "$ZFS_2TB_POOL"; then
-    retry_command "zpool create -f -o ashift=12 $ZFS_2TB_POOL mirror $NVME0 $NVME1"
+    retry_command "zpool create -f -o ashift=12 $ZFS_2TB_POOL mirror ${NVME_2TB[0]} ${NVME_2TB[1]}"
     zfs create "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to create dataset $ZFS_2TB_POOL/vms"; exit 1; }
     zfs set compression=lz4 "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to set compression on $ZFS_2TB_POOL/vms"; exit 1; }
     zfs set recordsize=128k "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to set recordsize on $ZFS_2TB_POOL/vms"; exit 1; }
     retry_command "pvesm add zfspool tank-vms -pool $ZFS_2TB_POOL/vms -content images,rootdir"
     echo "[$(date)] Created ZFS mirror pool '$ZFS_2TB_POOL' for VMs/containers" >> "$LOGFILE"
   else
-    echo "Warning: ZFS pool '$ZFS_2TB_POOL' already exists, skipping" | tee -a "$LOGFILE"
+    echo "Warning: ZFS pool '$ZFS_2TB_POOL' already exists, skipping" | tee", -a "$LOGFILE"
   fi
 }
 
 # Create ZFS single drive for 4TB NVMe
 create_zfs_single() {
   if ! zpool list | grep -q "$ZFS_4TB_POOL"; then
-    retry_command "zpool create -f -o ashift=12 $ZFS_4TB_POOL $NVME4TB"
+    retry_command "zpool create -f -o ashift=12 $ZFS_4TB_POOL $NVME_4TB"
     for dataset in models projects backups isos; do
       zfs create "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to create dataset $ZFS_4TB_POOL/$dataset"; exit 1; }
       zfs set compression=lz4 "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to set compression on $ZFS_4TB_POOL/$dataset"; exit 1; }
       zfs set recordsize=1M "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to set recordsize on $ZFS_4TB_POOL/$dataset"; exit 1; }
     done
-    retry_command "pvesm add dir shared-backups -path /$ZFS_4TB_POOL lados -content backup"
+    retry_command "pvesm add dir shared-backups -path /$ZFS_4TB_POOL/backups -content backup"
     retry_command "pvesm add dir shared-isos -path /$ZFS_4TB_POOL/isos -content iso"
     echo "[$(date)] Created ZFS pool '$ZFS_4TB_POOL' with datasets" >> "$LOGFILE"
   else
@@ -108,9 +108,10 @@ install_nfs_server() {
   fi
 }
 
-# Install and configure Samba server
+# Install and configure Samba server with enhanced error handling
 install_samba_server() {
   if ! check_package samba; then
+    retry_command "apt update"
     retry_command "apt install -y samba"
     echo "[$(date)] Installed Samba" >> "$LOGFILE"
   fi
@@ -119,16 +120,37 @@ install_samba_server() {
     read -p "Enter username for Samba credentials [$DEFAULT_USERNAME]: " USERNAME
     USERNAME=${USERNAME:-$DEFAULT_USERNAME}
   fi
-  if ! smbpasswd -a "$USERNAME" &>/dev/null; then
-    echo "Error: Failed to set Samba password for user $USERNAME" | tee -a "$LOGFILE"
+
+  # Check if user exists in system
+  if ! getent passwd "$USERNAME" &>/dev/null; then
+    echo "Error: User $USERNAME does not exist in the system" | tee -a "$LOGFILE"
     exit 1
   fi
-  echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
+
+  # Check if Samba user already exists
+  if pdbedit -L | grep -q "^$USERNAME:"; then
+    echo "Warning: Samba user $USERNAME already exists, updating password" | tee -a "$LOGFILE"
+  else
+    # Prompt for Samba password
+    echo "Setting Samba password for user $USERNAME"
+    if ! smbpasswd -a "$USERNAME"; then
+      echo "Error: Failed to set Samba password for user $USERNAME" | tee -a "$LOGFILE"
+      exit 1
+    fi
+    echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
+  fi
+
+  # Ensure Samba service is running
+  if ! systemctl is-active --quiet samba; then
+    retry_command "systemctl enable --now samba"
+    echo "[$(date)] Enabled and started Samba service" >> "$LOGFILE"
+  fi
 }
 
 # Configure firewall rules
 configure_firewall() {
   if ! check_package firewalld; then
+    retry_command "apt update"
     retry_command "apt install -y firewalld"
     echo "[$(date)] Installed firewalld" >> "$LOGFILE"
   fi

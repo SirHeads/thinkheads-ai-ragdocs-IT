@@ -2,7 +2,7 @@
 
 # proxmox_create_admin_user.sh
 # Creates a non-root Linux user with sudo and Proxmox admin privileges, sets up SSH key-based authentication
-# Version: 1.2.0
+# Version: 1.3.0
 # Author: Heads, Grok, Devstral
 # Usage: ./proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -40,6 +40,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Ensure sudo package and sudoers group exist
+setup_sudo() {
+  if ! check_package sudo; then
+    retry_command "apt update"
+    retry_command "apt install -y sudo"
+    echo "[$(date)] Installed sudo package" >> "$LOGFILE"
+  fi
+  if ! getent group sudo &>/dev/null; then
+    groupadd sudo || { echo "Error: Failed to create sudo group"; exit 1; }
+    echo "[$(date)] Created sudo group" >> "$LOGFILE"
+  fi
+}
+
+# Install Samba package
+install_samba() {
+  if ! check_package samba; then
+    retry_command "apt update"
+    retry_command "apt install -y samba"
+    echo "[$(date)] Installed Samba package" >> "$LOGFILE"
+  fi
+}
+
 # Prompt for username if not provided
 prompt_for_username() {
   if [[ -z "$USERNAME" ]]; then
@@ -74,9 +96,7 @@ create_user() {
   echo "$USERNAME:$PASSWORD" | chpasswd || { echo "Error: Failed to set password for user $USERNAME"; exit 1; }
 
   # Add user to sudo group
-  if ! grep -q " $USERNAME" /etc/sudoers; then
-    echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers || { echo "Error: Failed to add user $USERNAME to sudo group"; exit 1; }
-  fi
+  usermod -aG sudo "$USERNAME" || { echo "Error: Failed to add user $USERNAME to sudo group"; exit 1; }
 
   # Set up SSH key (if provided)
   if [[ -n "$SSH_PUBLIC_KEY" ]]; then
@@ -105,7 +125,7 @@ create_user() {
 # Configure SSH port if different from default
 configure_ssh_port() {
   if [[ "$SSH_PORT" -ne $DEFAULT_SSH_PORT ]]; then
-    sed -i "s/^Port $DEFAULT_SSH_PORT/Port $SSH_PORT/" /etc/ssh/sshd_config || { echo "Error: Failed to set SSH port"; exit 1; }
+    sed -i "s/^#Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config || { echo "Error: Failed to set SSH port"; exit 1; }
     systemctl restart sshd || { echo "Error: Failed to restart SSH service"; exit 1; }
     echo "[$(date)] Configured SSH to listen on port $SSH_PORT" >> "$LOGFILE"
   fi
@@ -113,6 +133,8 @@ configure_ssh_port() {
 
 # Main execution
 check_root
+setup_sudo
+install_samba
 prompt_for_username
 create_user
 configure_ssh_port
