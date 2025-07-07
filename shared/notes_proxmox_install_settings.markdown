@@ -8,10 +8,14 @@
 
 ## Storage Configuration
 - **Target Drives**: 
-  - 2x 240 GB Crucial BX500 SSD (SATA 1 and SATA 2)
+  - 2x 240 GB Crucial BX500 SSD (SATA 1 and SATA 2) - sda & sdb
 - **Filesystem**: ZFS (Mirror)
   - **Allocated Space**: 180 GB per SSD
   - **Reserved Space**: 60 GB per SSD (unallocated for emergency use)
+  - **Ashift: 12
+  - **compress: on
+  - **copies: 1
+  - **arc MAX size: 9566
 
 ## Network Configuration
 - **Management Interface**: 10GbE Ethernet
