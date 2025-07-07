@@ -1,131 +1,220 @@
-# ThinkHeads.ai Proxmox VE Server Setup
+# Phoenix Server Proxmox VE Setup
 
-Welcome to the **ThinkHeads.ai Proxmox VE Server Setup** repository! This project showcases a robust, scripted deployment of a Proxmox Virtual Environment (VE) server named **Phoenix**, designed to host **AI, machine learning, and multiple development environments** with high performance and flexibility. Built on powerful hardware and leveraging ZFS storage, NVIDIA GPU virtualization, and cross-platform NFS/Samba sharing, this setup supports local server operations with future cloud integration potential.
+This repository contains scripts to configure a Proxmox VE server tailored for high-performance home-lab server with AMD CPU, NVIDIA 5060 TI GPUs, and NVMe storage, supporting AI/ML workloads, containers, and VMs.
 
-This repository contains configuration files, scripts, and documentation to automate the setup of the Phoenix server, demonstrating expertise in system administration, virtualization, and infrastructure automation. The project is tailored for **AI/ML workloads** (e.g., Ollama model hosting), **development environments** (LXC containers and VMs), and **data management** (shared storage for datasets, backups, and ISOs).
+## Purpose
 
-## Project Goals
+The scripts automate the configuration of Proxmox VE, including repository setup, admin user creation, ZFS storage pools, NFS/Samba sharing, NVIDIA GPU virtualization, and LXC/VM user setup. They are modular, robust, and include error handling and logging.
 
-The primary goal is to create a **high-performance, local Proxmox VE server** to:
-- **Host AI/ML Workloads**: Run Ollama containers/VMs with shared model storage, leveraging dual NVIDIA 5060 TI GPUs for accelerated computation.
-- **Support Development Environments**: Provide isolated LXC containers and VMs for multiple programming and testing environments.
-- **Enable Scalable Storage**: Use ZFS for redundant (2x 2TB NVMe mirror) and shared (4TB NVMe) storage, accessible via NFS/Samba across Windows, Linux, and macOS.
-- **Automate Setup**: Deliver a repeatable, scripted process for environment creation, ensuring consistency and ease of deployment.
-- **Prepare for Growth**: Design a flexible infrastructure with upgrade paths for CPU, GPU, and storage, supporting future cloud integration.
+## Prerequisites
 
-This project reflects a professional approach to infrastructure design, with robust error handling, logging, and documentation, making it an excellent showcase for system administration and DevOps skills.
+Before running the scripts, ensure the following requirements are met:
 
-## Hardware Overview
+- **Operating System**: Proxmox VE 8.x (based on Debian 12 Bookworm) installed on 2x 240GB Crucial BX500 SSDs (ZFS mirror, 180GB allocated per SSD).
+- **Hardware**:
+  - AMD CPU (e.g., AMD 7600).
+  - 2x NVIDIA 5060 TI GPUs (PCIe 5.0 x8).
+  - 2x 2TB Samsung 990 EVO Plus NVMe (for ZFS mirror).
+  - 1x 4TB Samsung 990 EVO Plus NVMe (for shared storage).
+  - 96GB DDR5 RAM.
+  - 10GbE Ethernet interface.
+- **Network**:
+  - Static IP: `<server-ip>` (e.g., 192.168.1.100).
+  - Gateway: `<gateway-ip>` (e.g., 192.168.1.1).
+  - DNS: `<dns-server>` (e.g., 8.8.8.8).
+  - Subnet: `<subnet>` (e.g., 192.168.1.0/24).
+- **Software**:
+  - Internet access for package downloads (e.g., NVIDIA drivers, CUDA).
+  - Git installed (`apt install git`).
+- **Permissions**: Initial login as `root` user via SSH or console.
+- **Storage**: NVMe drives must be visible via `lsblk` (2x 2TB for mirror, 1x 4TB for standalone).
 
-The Phoenix server is built with high-end components optimized for virtualization and AI/ML workloads:
+## Pre-Configuration Steps
 
-- **Server Name**: Phoenix (Hostname: `Phoenix.ThinkHeads.ai`, IP: `10.0.0.13`)
-- **CPU**: AMD 7600 (overclockable to ~7600X performance)
-- **RAM**: 96GB DDR5 G.SKILL Flare X5 (5200 MHz)
-- **Storage**:
-  - 2x 240GB Crucial BX500 SSD (ZFS mirror, Proxmox VE installation)
-  - 2x 2TB Samsung 990 EVO Plus NVMe (ZFS mirror, container/VM OS)
-  - 1x 4TB Samsung 990 EVO Plus NVMe (ZFS single, shared storage)
-- **GPUs**: 2x NVIDIA 5060 TI 16GB (PCIe 5.0 x8, virtualized for AI/ML)
-- **Network**: 10GbE Ethernet for high-speed access
-- **Motherboard**: Gigabyte B850 AI TOPP (PCIe 5.0, NVMe support)
-- **Power Supply**: ASUS TUF Gaming 1200W 80 Plus Gold
+Follow these steps in order to prepare the server before running the setup scripts. All commands are executed as the `root` user unless otherwise specified.
 
-This hardware supports demanding workloads with room for upgrades (e.g., AMD 10950X3D CPU, larger NVMe drives, or higher-end GPUs). See `docs/server_hardware_markdown` for details.
+1. **Log in as root**:
 
-## Repository Structure
+   - Access the server via SSH (`ssh root@<server-ip>`) or console.
 
-The repository is organized for clarity and ease of use:
+2. **Install Git**:
 
-- **`docs/`**: Configuration and hardware documentation
-  - `notes_proxmox_install_settings.markdown`: Proxmox VE installation details (ZFS mirror, network config)
-  - `notes_proxmox_storage_config.markdown`: ZFS storage setup for container/VM and shared storage
-  - `notes_server_hardware_markdown`: Hardware specifications and upgrade paths
-- **`scripts/`**: Automation scripts for Proxmox VE setup
-  - `common.sh`: Shared functions for error handling and logging
-  - `proxmox_create_admin_user.sh`: Creates a non-root admin user with SSH and Proxmox privileges
-  - `proxmox_setup_zfs_nfs_samba.sh`: Configures ZFS pools, NFS/Samba, and firewall
-  - `proxmox_setup_nvidia_gpu_virt.sh`: Sets up NVIDIA GPU virtualization (driver 575.57.08, CUDA 12.9)
-  - `proxmox_create_lxc_user.sh`: Creates users for LXC containers/VMs with NFS/Samba access
-  - `README.md`: Detailed instructions for script usage
-- **`README.TXT`**: This file, providing a high-level overview
+   - Ensure `git` is installed for cloning the repository.
 
-
-## Setup Process
-
-The `scripts/` directory contains a set of Bash scripts to automate the Proxmox VE environment setup. These scripts are modular, include robust error handling, and support command-line arguments for automation. For detailed instructions, see `scripts/README.md`. A high-level overview:
-
-1. **Prepare Scripts**:
-   - Copy scripts to `/usr/local/bin` and make executable:
      ```bash
-     sudo cp scripts/*.sh /usr/local/bin/
+     apt update
+     apt install -y git
+     ```
+
+3. **Clone the Repository**:
+
+   - Clone the repository containing the setup scripts to a temporary directory.
+
+     ```bash
+     git clone <repository-url>
+     cd <repository-name>
+     ```
+
+     Replace `<repository-url>` with the actual repository URL and `<repository-name>` with the repository folder name.
+
+4. **Copy Scripts to** `/usr/local/bin`:
+
+   - Create the target directory and copy the scripts.
+
+     ```bash
+     sudo mkdir -p /usr/local/bin
+     sudo cp common.sh proxmox_configure_repos.sh proxmox_create_admin_user.sh proxmox_setup_zfs_nfs_samba.sh proxmox_setup_nvidia_gpu_virt.sh proxmox_create_lxc_user.sh /usr/local/bin/
+     ```
+
+5. **Set Script Permissions**:
+
+   - Make the scripts executable.
+
+     ```bash
      sudo chmod +x /usr/local/bin/*.sh
      ```
-   - Configure log rotation for `/var/log/proxmox_setup.log` (see `scripts/README.md`).
 
-2. **Execution Order**:
-   - **Step 1**: `proxmox_create_admin_user.sh` - Creates an admin user (e.g., `heads`) with SSH (custom port) and Proxmox access.
-   - **Step 2**: `proxmox_setup_zfs_nfs_samba.sh` - Sets up ZFS pools (`tank` for VMs, `shared` for models/projects/backups/isos), NFS/Samba, and firewall.
-   - **Step 3**: `proxmox_setup_nvidia_gpu_virt.sh` - Configures NVIDIA GPUs for virtualization.
-   - **Step 4**: Create LXC containers/VMs via Proxmox web interface (`https://10.0.0.13:8006`).
-   - **Step 5**: `proxmox_create_lxc_user.sh` - Creates users for containers/VMs with NFS/Samba access.
+6. **Configure Log Rotation**:
 
-3. **Key Features**:
-   - **ZFS Storage**: Redundant 2TB mirror (`tank`) for VM/container OS, 4TB single pool (`shared`) for shared storage.
-   - **NFS/Samba**: Cross-platform access to `/shared/models`, `/shared/projects`, `/shared/backups`, `/shared/isos`.
-   - **GPU Virtualization**: NVIDIA driver 575.57.08 and CUDA 12.9 for AI/ML workloads.
-   - **Automation**: Scripts support non-interactive execution (e.g., `./proxmox_create_admin_user.sh --username heads --ssh-port 2222`).
+   - The scripts log to `/var/log/proxmox_setup.log`. Set up log rotation to manage log size.
+   - Create the log rotation configuration file:
 
-## Why This Project?
+     ```bash
+     sudo nano /etc/logrotate.d/proxmox_setup
+     ```
 
-This setup demonstrates expertise in:
-- **System Administration**: Configuring Proxmox VE, ZFS, NFS, Samba, and firewalld.
-- **Virtualization**: Setting up LXC containers, VMs, and GPU passthrough for AI/ML.
-- **Automation**: Writing robust, modular Bash scripts with error handling and logging.
-- **Performance Optimization**: Leveraging NVMe, 10GbE, and ZFS for high-speed, reliable storage.
-- **Scalability**: Designing for future upgrades and cloud integration.
+#   - Add the following content:\
+    \`\`\`\
+    /var/log/proxmox_setup.log {\
+        weekly\
+        rotate 4\
+        compress\
+        missingok\
+    }\
+    \`\`\`\
+  - Save and exit (\`Ctrl+O\`, \`Enter\`, \`Ctrl+X\`).\
+  - Test the log rotation configuration:\
+    \`\`\`bash\
+    sudo logrotate -f /etc/logrotate.d/proxmox_setup\
+    \`\`\`\
+\
+7. \*\*Verify Log File Access\*\*:\
+  - Ensure the log file directory and file are accessible.\
+    \`\`\`bash\
+    sudo mkdir -p /var/log\
+    sudo touch /var/log/proxmox_setup.log\
+    sudo chmod 664 /var/log/proxmox_setup.log\
+    \`\`\`\
+  - Verify the log file is writable:\
+    \`\`\`bash\
+    echo "Test log entry" &gt;&gt; /var/log/proxmox_setup.log\
+    cat /var/log/proxmox_setup.log\
+    \`\`\`\
+  - If the test entry is visible, the log file is correctly configured.\
+\
+8. \*\*Verify NVMe Drives\*\*:\
+  - Confirm the presence of 2x 2TB NVMe drives and 1x 4TB NVMe drive using \`lsblk\`.\
+    \`\`\`bash\
+    lsblk -d -o NAME,SIZE\
+    \`\`\`\
+  - Expected output should show three NVMe drives (e.g., \`nvme0n1\`, \`nvme1n1\` \~2TB each, \`nvme2n1\` \~4TB).\
+\
+9. \*\*Ensure Internet Connectivity\*\*:\
+  - Verify internet access for package downloads.\
+    \`\`\`bash\
+    ping -c 4 &lt;dns-server&gt;\
+    \`\`\`\
+  - Ensure the DNS server (e.g., \`8.8.8.8\`) and gateway (e.g., \`192.168.1.1\`) are reachable.\
+\
+## Running the Scripts\
+\
+After completing the pre-configuration steps, run the scripts in the following order as the \`root\` user. After the admin user is created, switch to the new user for subsequent steps.\
+\
+1. \*\*Configure Repositories\*\*:\
+  - Run \`proxmox_configure_repos.sh\` to set up the Proxmox VE no-subscription repository.\
+    \`\`\`bash\
+    sudo /usr/local/bin/proxmox_configure_repos.sh\
+    \`\`\`\
+\
+2. \*\*Create Admin User\*\*:\
+  - Run \`proxmox_create_admin_user.sh\` to create a non-root admin user with sudo and Proxmox privileges.\
+    \`\`\`bash\
+    sudo /usr/local/bin/proxmox_create_admin_user.sh --username &lt;admin-user&gt; --ssh-port &lt;ssh-port&gt;\
+    \`\`\`\
+    Replace \`&lt;admin-user&gt;\` with your chosen username (e.g., \`adminuser\`) and \`&lt;ssh-port&gt;\` with your preferred SSH port (e.g., \`2222\`).\
+  - After successful execution, log out and log in as the new user (e.g., \`ssh &lt;admin-user&gt;@&lt;server-ip&gt; -p &lt;ssh-port&gt;\`).\
+\
+3. \*\*Switch to Admin User\*\*:\
+  - Log in as the new admin user via SSH.\
+    \`\`\`bash\
+    ssh &lt;admin-user&gt;@&lt;server-ip&gt; -p &lt;ssh-port&gt;\
+    \`\`\`\
+\
+4. \*\*Configure ZFS, NFS, and Samba\*\*:\
+  - As the \`&lt;admin-user&gt;\` user, run \`proxmox_setup_zfs_nfs_samba.sh\` to set up ZFS pools and shared storage.\
+    \`\`\`bash\
+    sudo /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh --username &lt;admin-user&gt;\
+    \`\`\`\
+\
+5. \*\*Configure NVIDIA GPU Virtualization\*\*:\
+  - Run \`proxmox_setup_nvidia_gpu_virt.sh\` to configure GPU passthrough.\
+    \`\`\`bash\
+    sudo /usr/local/bin/proxmox_setup_nvidia_gpu_virt.sh --no-reboot\
+    \`\`\`\
+  - Reboot the server unless \`--no-reboot\` is used:\
+    \`\`\`bash\
+    sudo reboot\
+    \`\`\`\
+\
+6. \*\*Create LXC/VM User\*\*:\
+  - Run \`proxmox_create_lxc_user.sh\` for each LXC container or VM user.\
+    \`\`\`bash\
+    sudo /usr/local/bin/proxmox_create_lxc_user.sh --username &lt;lxc-user&gt;\
+    \`\`\`\
+    Replace \`&lt;lxc-user&gt;\` with the desired username (e.g., \`lxcuser\`).\
+\
+## Post-Setup Verification\
+\
+- \*\*Check ZFS Pools\*\*:\
+ \`\`\`bash\
+ zpool status quickOS\
+ zpool status fastData
 
-The scripted approach ensures repeatability, making it ideal for production environments or rapid redeployment. The documentation and logging provide transparency, while the hardware supports cutting-edge AI/ML and development tasks.
+- **Test NFS Mounts**:
 
-## Getting Started
+  ```bash
+  mount -t nfs <server-ip>:/fastData/models /mnt/models
+  ```
 
-1. **Clone the Repository**:
-   ```bash
-   git clone <repository-url>
-   cd <repository-name>
-   ```
+- **Test Samba Access**:
 
-2. **Review Documentation**:
-   - Read `docs/proxmox_install_settings.markdown` and `docs/proxmox_storage_config.markdown` for server setup details.
-   - Check `docs/server_hardware_markdown` for hardware context.
+  ```bash
+  smbclient -L //<server-ip> -U <admin-user>
+  ```
 
-3. **Follow Script Instructions**:
-   - See `scripts/README.md` for detailed setup steps, including file placement, execution order, and verification commands.
+- **Verify GPU**:
 
-4. **Post-Setup**:
-   - Access Proxmox: `https://10.0.0.13:8006`
-   - Mount shared storage: `mount -t nfs 10.0.0.13:/shared/models /mnt/models`
-   - Verify GPUs: `nvidia-smi`
-   - Monitor logs: `tail -f /var/log/proxmox_setup.log`
+  ```bash
+  nvidia-smi
+  ```
 
-## Security and Maintenance
+- **Access Proxmox Web Interface**:
 
-- **Security**:
-  - Restrict NFS to `10.0.0.0/24` subnet.
-  - Use non-standard SSH ports and firewall rules (e.g., `firewall-cmd --add-port=2222/tcp`).
-  - Consider `root_squash` for NFS to enhance security.
-- **Maintenance**:
-  - Monitor ZFS health: `zpool status tank; zpool status shared`
-  - Schedule ZFS snapshots: `zfs snapshot shared/models@daily-$(date +%Y%m%d)`
-  - Update Proxmox and NVIDIA drivers regularly.
+  - Open `https://<server-ip>:8006` in a browser and log in with the admin user credentials.
 
-## Future Enhancements
+- **Check Logs**:
 
-- Add orchestration script to run all scripts in sequence.
-- Implement automated backups to offsite storage (e.g., Backblaze B2).
-- Integrate with cloud services for hybrid AI/ML workloads.
-- Expand monitoring with tools like Prometheus and Grafana.
+  ```bash
+  tail -f /var/log/proxmox_setup.log
+  ```
+
+## Additional Resources
+
+- For detailed script descriptions and advanced configurations, see scripts/README-scripts.markdown.
+- For hardware specifications, see notes_server_hardware.markdown.
+- For Proxmox VE installation settings, see notes_proxmox_install_settings.markdown.
+- For storage configuration details, see notes_proxmox_storage_config.markdown.
 
 ## Contact
 
-For questions or contributions, contact [Your Name] at [Your Email]. This project is a testament to my passion for building scalable, automated infrastructure for AI and development. I welcome feedback and opportunities to collaborate!
+For issues or enhancements, contact the project maintainer at `<maintainer-email>` (e.g., `admin@example.com`).
