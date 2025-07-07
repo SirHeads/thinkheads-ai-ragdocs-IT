@@ -25,7 +25,7 @@ Before running the scripts, ensure the following requirements are met:
   - Subnet: `<subnet>` (e.g., 192.168.1.0/24).
 - **Software**:
   - Internet access for package downloads (e.g., NVIDIA drivers, CUDA).
-  - Git installed (`apt install git`).
+  - `wget` installed (typically pre-installed on Proxmox VE).
 - **Permissions**: Initial login as `root` user via SSH or console.
 - **Storage**: NVMe drives must be visible via `lsblk` (2x 2TB for mirror, 1x 4TB for standalone).
 
@@ -36,32 +36,48 @@ Follow these steps in order to prepare the server before running the setup scrip
 1. **Log in as root**:
    - Access the server via SSH (`ssh root@<server-ip>`) or console.
 
-2. **Install Git**:
-   - Ensure `git` is installed for cloning the repository.
+2. **Download Scripts with wget**:
+   - Use `wget` to download all scripts from their raw URLs to `/root`.
      ```bash
-     apt update
-     apt install -y git
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/common.sh
+     ```
+     ```bash
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/proxmox_configure_repos.sh
+     ```
+     ```bash
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/proxmox_create_admin_user.sh
+     ```
+     ```bash
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/proxmox_setup_zfs_nfs_samba.sh
+     ```
+     ```bash
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/proxmox_setup_nvidia_gpu_virt.sh
+     ```
+     ```bash
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/blob/main/shared/scripts/proxmox_create_lxc_user.sh
+     ```
+     For private repositories, include an authorization token:
+     ```bash
+     wget --header="Authorization: token <your-token>" <url-to-common.sh> -O /root/common.sh
      ```
 
-3. **Clone the Repository**:
-   - Clone the repository containing the setup scripts to a temporary directory.
-     ```bash
-     git clone <repository-url>
-     cd <repository-name>
-     ```
-     Replace `<repository-url>` with the actual repository URL and `<repository-name>` with the repository folder name.
-
-4. **Copy Scripts to `/usr/local/bin`**:
-   - Create the target directory and copy the scripts.
+3. **Copy Scripts to `/usr/local/bin`**:
+   - Copy all downloaded scripts to `/usr/local/bin`.
      ```bash
      sudo mkdir -p /usr/local/bin
-     sudo cp common.sh proxmox_configure_repos.sh proxmox_create_admin_user.sh proxmox_setup_zfs_nfs_samba.sh proxmox_setup_nvidia_gpu_virt.sh proxmox_create_lxc_user.sh /usr/local/bin/
+     sudo cp /root/common.sh /root/proxmox_configure_repos.sh /root/proxmox_create_admin_user.sh /root/proxmox_setup_zfs_nfs_samba.sh /root/proxmox_setup_nvidia_gpu_virt.sh /root/proxmox_create_lxc_user.sh /usr/local/bin/
      ```
 
-5. **Set Script Permissions**:
+4. **Set Script Permissions**:
    - Make the scripts executable.
      ```bash
      sudo chmod +x /usr/local/bin/*.sh
+     ```
+
+5. **Configure Repositories**:
+   - Run `proxmox_configure_repos.sh` to enable the Proxmox VE no-subscription repository.
+     ```bash
+     sudo /usr/local/bin/proxmox_configure_repos.sh
      ```
 
 6. **Configure Log Rotation**:
@@ -117,33 +133,30 @@ Follow these steps in order to prepare the server before running the setup scrip
 
 After completing the pre-configuration steps, run the scripts in the following order as the `root` user. After the admin user is created, switch to the new user for subsequent steps.
 
-1. **Configure Repositories**:
-   - Run `proxmox_configure_repos.sh` to set up the Proxmox VE no-subscription repository.
-     ```bash
-     sudo /usr/local/bin/proxmox_configure_repos.sh
-     ```
-
-2. **Create Admin User**:
+1. **Create Admin User**:
    - Run `proxmox_create_admin_user.sh` to create a non-root admin user with sudo and Proxmox privileges.
      ```bash
      sudo /usr/local/bin/proxmox_create_admin_user.sh --username <admin-user> --ssh-port <ssh-port>
      ```
      Replace `<admin-user>` with your chosen username (e.g., `adminuser`) and `<ssh-port>` with your preferred SSH port (e.g., `2222`).
-   - After successful execution, log out and log in as the new user (e.g., `ssh <admin-user>@<server-ip> -p <ssh-port>`).
+   - After successful execution, log out and log in as the new user:
+     ```bash
+     ssh <admin-user>@<server-ip> -p <ssh-port>
+     ```
 
-3. **Switch to Admin User**:
+2. **Switch to Admin User**:
    - Log in as the new admin user via SSH.
      ```bash
      ssh <admin-user>@<server-ip> -p <ssh-port>
      ```
 
-4. **Configure ZFS, NFS, and Samba**:
+3. **Configure ZFS, NFS, and Samba**:
    - As the `<admin-user>` user, run `proxmox_setup_zfs_nfs_samba.sh` to set up ZFS pools and shared storage.
      ```bash
      sudo /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh --username <admin-user>
      ```
 
-5. **Configure NVIDIA GPU Virtualization**:
+4. **Configure NVIDIA GPU Virtualization**:
    - Run `proxmox_setup_nvidia_gpu_virt.sh` to configure GPU passthrough.
      ```bash
      sudo /usr/local/bin/proxmox_setup_nvidia_gpu_virt.sh --no-reboot
@@ -153,7 +166,7 @@ After completing the pre-configuration steps, run the scripts in the following o
      sudo reboot
      ```
 
-6. **Create LXC/VM User**:
+5. **Create LXC/VM User**:
    - Run `proxmox_create_lxc_user.sh` for each LXC container or VM user.
      ```bash
      sudo /usr/local/bin/proxmox_create_lxc_user.sh --username <lxc-user>
@@ -200,4 +213,4 @@ After completing the pre-configuration steps, run the scripts in the following o
 
 ## Contact
 
-For issues or enhancements, contact the project maintainer at `<maintainer-email>` (e.g., `admin@example.com`).
+For issues or enhancements, contact me at @ Heads@ThinkHeads.ai (eventually, I'll get there).
