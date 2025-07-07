@@ -12,6 +12,7 @@
 
 ### 2 TB NVMe Drives (Container and VM OS & Primary Drives)
 - **Configuration**: ZFS Mirror (RAID1 equivalent)
+- **Name: quickOS
 - **Purpose**: Host Proxmox container (LXC) and VM root filesystems and primary storage
 - **Setup Steps**:
   1. Identify NVMe drives: Run `lsblk` or `nvme list` to confirm drive names (e.g., `/dev/nvme0n1`, `/dev/nvme1n1`).
@@ -29,6 +30,7 @@
 
 ### 4 TB NVMe Drive (Shared Storage)
 - **Configuration**: ZFS Single Drive with NFS Exports
+- **Name: fastData
 - **Purpose**: Shared storage for:
   - **Ollama Models**: Shared folder for AI models used by Ollama instances in containers/VMs
   - **Data Projects**: Storage for VM data project files (e.g., datasets, scripts)
