@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# create_container_user.sh
+# proxmox_create_lxc_user.sh
 # Creates a Linux user with Samba credentials and NFS access for a container/VM
 
 set -e
 LOGFILE="/var/log/proxmox_setup.log"
-echo "[$(date)] Starting create_container_user.sh" >> $LOGFILE
+echo "[$(date)] Starting proxmox_create_lxc_user.sh" >> $LOGFILE
 
 # Function to check if script is run as root
 check_root() {
@@ -70,4 +70,4 @@ echo "- Samba access: \\\\10.0.0.13\\<dataset> (use '$USERNAME' and Samba passwo
 echo "- NFS access (in container/VM): mount -t nfs 10.0.0.13:/shared/<dataset> /mnt/<dataset>"
 echo "- UID: $UID (use for container/VM config)"
 echo "Store the Samba password securely."
-echo "[$(date)] Completed create_container_user.sh" >> $LOGFILE
+echo "[$(date)] Completed proxmox_create_lxc_user.sh" >> $LOGFILE

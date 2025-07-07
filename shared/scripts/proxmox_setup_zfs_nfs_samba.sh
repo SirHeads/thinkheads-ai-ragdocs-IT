@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# setup_zfs_nfs_samba.sh
+# proxmox_setup_zfs_nfs_samba.sh
 # Configures ZFS mirror for 2x 2TB NVMe, creates a single drive pool for 4TB NVMe with datasets,
 # installs and configures NFS/Samba server, and sets up firewall rules.
 
 set -e
 LOGFILE="/var/log/proxmox_setup.log"
-echo "[$(date)] Starting setup_zfs_nfs_samba.sh" >> $LOGFILE
+echo "[$(date)] Starting proxmox_setup_zfs_nfs_samba.sh" >> $LOGFILE
 
 # Function to check if script is run as root
 check_root() {
@@ -132,4 +132,4 @@ install_nfs_server
 install_samba_server
 configure_firewall
 
-echo "[$(date)] Completed setup_zfs_nfs_samba.sh" >> $LOGFILE
+echo "[$(date)] Completed proxmox_setup_zfs_nfs_samba.sh" >> $LOGFILE

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# create_admin_user.sh
+# proxmox_create_admin_user.sh
 # Creates a non-root Linux user with sudo and Proxmox admin privileges, sets up SSH key-based authentication
 
 set -e
 LOGFILE="/var/log/proxmox_setup.log"
-echo "[$(date)] Starting create_admin_user.sh" >> $LOGFILE
+echo "[$(date)] Starting proxmox_create_admin_user.sh" >> $LOGFILE
 
 # Function to check if script is run as root
 check_root() {
@@ -57,4 +57,4 @@ fi
 
 echo "Setup complete for admin user '$USERNAME'."
 echo "- To log in via SSH, use the following command: ssh $USERNAME@<hostname>"
-echo "[$(date)] Completed create_admin_user.sh" >> $LOGFILE
+echo "[$(date)] Completed proxmox_create_admin_user.sh" >> $LOGFILE
