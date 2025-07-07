@@ -1,7 +1,3 @@
-Certainly! Here is a revised `README.md` file with descriptions and instructions, without including the scripts themselves:
-
----
-
 # Proxmox Setup Scripts
 
 This repository contains a set of Bash scripts designed to automate the setup and configuration of Proxmox environments, including user management, storage configuration, and network sharing.
@@ -66,8 +62,4 @@ This repository contains a set of Bash scripts designed to automate the setup an
 
 ## Contributing
 
-Feel free to submit issues or pull requests if you have suggestions for improvements or encounter any problems.
-
----
-
-This `README.md` provides clear instructions on how to use each script while keeping the actual scripts out of the document. Users can open the files themselves to view the code.
+Private for now
