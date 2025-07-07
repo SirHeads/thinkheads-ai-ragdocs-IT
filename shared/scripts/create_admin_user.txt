@@ -7,6 +7,14 @@ set -e
 LOGFILE="/var/log/proxmox_setup.log"
 echo "[$(date)] Starting create_admin_user.sh" >> $LOGFILE
 
+# Function to check if script is run as root
+check_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run with sudo" | tee -a $LOGFILE
+    exit 1
+  fi
+}
+
 # Prompt for username (default: heads)
 read -p "Enter new admin username [heads]: " USERNAME
 USERNAME=${USERNAME:-heads}
@@ -14,148 +22,39 @@ if [[ -z "$USERNAME" ]]; then
   echo "Error: Username cannot be empty" | tee -a $LOGFILE
   exit 1
 fi
-if id "$USERNAME" &>/dev/null; then
+
+# Check if user already exists using getent for security reasons
+if getent passwd "$USERNAME" &>/dev/null; then
   echo "Warning: User $USERNAME already exists, skipping user creation" | tee -a $LOGFILE
 else
-  # Prompt for password
-  read -s -p "Enter password for $USERNAME: " PASSWORD
+  # Prompt for password with validation (minimum length and special character)
+  read -s -p "Enter password for $USERNAME (minimum 8 characters with at least one special character): " PASSWORD
   echo
-  if [[ -z "$PASSWORD" ]]; then
-    echo "Error: Password cannot be empty" | tee -a $LOGFILE
+  if [[ ${#PASSWORD} -lt 8 || ! $PASSWORD =~ [^a-zA-Z0-9] ]]; then
+    echo "Error: Password must be at least 8 characters long and contain at least one special character" | tee -a $LOGFILE
     exit 1
   fi
 
-  # Create Linux user with sudo privileges
+  # Create user with sudo privileges (assuming sudo is installed)
   useradd -m -s /bin/bash "$USERNAME"
   echo "$USERNAME:$PASSWORD" | chpasswd
   usermod -aG sudo "$USERNAME"
-  echo "[$(date)] Created Linux user $USERNAME with sudo privileges" >> $LOGFILE
+
+  echo "[$(date)] Created Linux admin user $USERNAME with sudo privileges" >> $LOGFILE
+
+  # Setup SSH key-based authentication (optional)
+  read -p "Would you like to add an SSH public key for user '$USERNAME'? [y/N]: " ADD_SSH_KEY
+  if [[ "$ADD_SSH_KEY" == "y" || "$ADD_SSH_KEY" == "Y" ]]; then
+    read -p "Enter the SSH public key: " SSH_PUBLIC_KEY
+    mkdir -p /home/$USERNAME/.ssh
+    echo "$SSH_PUBLIC_KEY" >> /home/$USERNAME/.ssh/authorized_keys
+    chown -R $USERNAME:$USERNAME /home/$USERNAME/.ssh
+    chmod 600 /home/$USERNAME/.ssh/authorized_keys
+
+    echo "[$(date)] Added SSH public key for user $USERNAME" >> $LOGFILE
+  fi
 fi
 
-# Create Proxmox user with admin role
-if ! pveum user list | grep -q "$USERNAME@pve"; then
-  pveum user add "$USERNAME@pve" -password "$PASSWORD"
-  pveum role add AdminRole -privs "Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Pool.Allocate Sys.Audit Sys.Console Sys.Modify VM.Allocate VM.Audit VM.Backup VM.Clone VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.Migrate VM.Monitor VM.PowerMgmt VM.Snapshot"
-  pveum acl modify / -user "$USERNAME@pve" -role AdminRole
-  echo "[$(date)] Created Proxmox user $USERNAME@pve with AdminRole" >> $LOGFILE
-else
-  echo "Warning: Proxmox user $USERNAME@pve already exists, skipping" | tee -a $LOGFILE
-fi
-
-# Note on how to get SSH public key
-echo "Note: To get your SSH public key from your workstation:"
-echo "- On Linux/macOS:"
-echo "  1. Check for existing key: cat ~/.ssh/id_ed25519.pub"
-echo "  2. If none exists, generate one: ssh-keygen -t ed25519 -C \"$USERNAME@workstation\""
-echo "  3. Copy the key: cat ~/.ssh/id_ed25519.pub"
-echo "- On Windows (PowerShell):"
-echo "  1. Check: Get-Content \$env:USERPROFILE\\.ssh\\id_ed25519.pub"
-echo "  2. Generate: ssh-keygen -t ed25519 -C \"$USERNAME@workstation\""
-echo "  3. Copy: Get-Content \$env:USERPROFILE\\.ssh\\id_ed25519.pub"
-echo "- On Windows (PuTTY):"
-echo "  1. Open PuTTYgen, generate a key (EdDSA or RSA), and copy the 'Public key for pasting'."
-echo "Paste the entire public key (e.g., ssh-ed25519 AAAAC3... $USERNAME@workstation) below."
-echo "Press Enter to skip if you’ll add the key later."
-
-# Prompt for SSH public key
-read -p "Paste SSH public key for $USERNAME: " SSH_KEY
-if [[ -n "$SSH_KEY" ]]; then
-  HOME_DIR=$(getent passwd "$USERNAME" | cut -d: -f6)
-  SSH_DIR="$HOME_DIR/.ssh"
-  AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
-  mkdir -p "$SSH_DIR"
-  echo "$SSH_KEY" >> "$AUTHORIZED_KEYS"
-  chown -R "$USERNAME:$USERNAME" "$SSH_DIR"
-  chmod 700 "$SSH_DIR"
-  chmod 600 "$AUTHORIZED_KEYS"
-  echo "[$(date)] Added SSH public key for $USERNAME" >> $LOGFILE
-else
-  echo "Warning: No SSH public key provided, skipping SSH key setup" | tee -a $LOGFILE
-fi
-
-# Harden SSH configuration
-SSHD_CONFIG="/etc/ssh/sshd_config"
-if ! grep -q "PermitRootLogin no" "$SSHD_CONFIG"; then
-  echo "PermitRootLogin no" >> "$SSHD_CONFIG"
-  echo "[$(date)] Disabled root SSH login" >> $LOGFILE
-fi
-if ! grep -q "PasswordAuthentication no" "$SSHD_CONFIG"; then
-  echo "PasswordAuthentication no" >> "$SSHD_CONFIG"
-  echo "[$(date)] Disabled password-based SSH authentication" >> $LOGFILE
-fi
-if ! grep -q "AllowUsers $USERNAME" "$SSHD_CONFIG"; then
-  echo "AllowUsers $USERNAME" >> "$SSHD_CONFIG"
-  echo "[$(date)] Restricted SSH access to $USERNAME" >> $LOGFILE
-fi
-if ! grep -q "ListenAddress 10.0.0.13" "$SSHD_CONFIG"; then
-  echo "ListenAddress 10.0.0.13" >> "$SSHD_CONFIG"
-  echo "[$(date)] Restricted SSH to 10.0.0.13" >> $LOGFILE
-fi
-
-# Restart SSH service
-systemctl restart sshd
-echo "[$(date)] Restarted SSH service" >> $LOGFILE
-
-# Verify user and SSH setup
-if id "$USERNAME" &>/dev/null && pveum user list | grep -q "$USERNAME@pve"; then
-  echo "User $USERNAME created successfully in Linux and Proxmox" | tee -a $LOGFILE
-else
-  echo "Error: User creation failed" | tee -a $LOGFILE
-  exit 1
-fi
-if [[ -f "$AUTHORIZED_KEYS" ]] && grep -q "$SSH_KEY" "$AUTHORIZED_KEYS"; then
-  echo "SSH key-based authentication configured for $USERNAME" | tee -a $LOGFILE
-else
-  echo "Warning: SSH key setup incomplete; password login disabled, ensure key is added later" | tee -a $LOGFILE
-fi
-
-# Final instructions
-echo "Setup complete. Switch to new user with: su - $USERNAME"
-echo "Or SSH as: ssh $USERNAME@10.0.0.13 (key-based authentication required)"
-echo "To add SSH key later, append to $AUTHORIZED_KEYS and set permissions (chown $USERNAME:$USERNAME, chmod 600)"
+echo "Setup complete for admin user '$USERNAME'."
+echo "- To log in via SSH, use the following command: ssh $USERNAME@<hostname>"
 echo "[$(date)] Completed create_admin_user.sh" >> $LOGFILE
-```
-
-### Key Changes
-- **SSH Key Instructions**: Added a detailed note before the SSH key prompt, explaining how to find or generate a public key on:
-  - **Linux/macOS**: Using `cat ~/.ssh/id_ed25519.pub` or `ssh-keygen`.
-  - **Windows (PowerShell/OpenSSH)**: Using `Get-Content` or `ssh-keygen`.
-  - **Windows (PuTTY)**: Using PuTTYgen to generate and copy the public key.
-- **Clarity**: The note is concise, includes exact commands, and accounts for users accessing the script from the Proxmox console or another system.
-- **Security**: Maintains all prior security features (disabling `root` SSH, password-based SSH, restricting to `10.0.0.13` and `heads` user).
-
-### Usage Instructions
-1. **Save and Run**:
-   - Save the script to `/root/setup_scripts/create_admin_user.sh` on the Proxmox server.
-   - Make executable: `chmod +x create_admin_user.sh`
-   - Run as `root`: `bash create_admin_user.sh`
-2. **Follow Prompts**:
-   - Enter `heads` (or press Enter for default).
-   - Enter a strong password.
-   - When the SSH key note appears, follow the instructions to get your public key from your workstation (or generate one if needed).
-   - Paste the public key (e.g., `ssh-ed25519 AAAAC3... heads@workstation`) or press Enter to skip and add later.
-3. **Accessing the Key**:
-   - **From a Workstation**: Use the commands in the note (e.g., `cat ~/.ssh/id_ed25519.pub` on Linux/macOS) before running the script, then paste the key.
-   - **From Proxmox Console**: If you’re running the script via the web GUI console (`https://10.0.0.13:8006` > Node > Shell), you’ll need to generate or copy the key from a workstation first. You can:
-     - Copy the key to the server via a temporary file (e.g., upload to `/shared/backups` and read it).
-     - Or skip the key prompt and add it later to `/home/heads/.ssh/authorized_keys`:
-       ```bash
-       su - heads
-       echo "ssh-ed25519 AAAAC3... heads@workstation" >> ~/.ssh/authorized_keys
-       chmod 600 ~/.ssh/authorized_keys
-       chown heads:heads ~/.ssh/authorized_keys
-       ```
-4. **Test Access**:
-   - **Web GUI**: Log in at `https://10.0.0.13:8006` with `heads@pve` and the password.
-   - **SSH**: From your workstation: `ssh heads@10.0.0.13` (requires the private key matching the public key).
-5. **Backup**:
-   - Store the script in `/shared/backups` or a Git repository.
-   - Backup `~heads/.ssh/authorized_keys` and the password securely for disaster recovery.
-
-### Notes
-- **Console Usage**: If you’re using the Proxmox console and don’t have a key ready, skip the key prompt (press Enter) and add the key later when you have access to a workstation.
-- **Multiple Workstations**: Add additional public keys to `~heads/.ssh/authorized_keys` (one per line) for other workstations, as described in prior responses.
-- **Security**: The script enforces key-based SSH, so you’ll need a key for CLI access, but the web GUI remains password-based for flexibility.
-- **Disaster Recovery**: The script’s idempotency ensures you can rerun it post-reinstall, and the note helps you quickly regenerate or locate your SSH key.
-
-If you want to test this script, need help generating a key from a specific workstation, or are ready for the next script (e.g., ZFS pool setup), let me know!

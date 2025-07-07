@@ -7,84 +7,63 @@ set -e
 LOGFILE="/var/log/proxmox_setup.log"
 echo "[$(date)] Starting create_container_user.sh" >> $LOGFILE
 
-# Check if running with sudo
-if [[ $EUID -ne 0 ]]; then
-  echo "Error: This script must be run with sudo" | tee -a $LOGFILE
-  exit 1
-fi
-
-# Prompt for username
-read -p "Enter new username for container/VM: " USERNAME
-if [[ -z "$USERNAME" ]]; then
-  echo "Error: Username cannot be empty" | tee -a $LOGFILE
-  exit 1
-fi
-if id "$USERNAME" &>/dev/null; then
-  echo "Warning: User $USERNAME already exists, skipping user creation" | tee -a $LOGFILE
-else
-  # Create Linux user without home directory or login shell
-  useradd -M -s /bin/false "$USERNAME"
-  echo "[$(date)] Created Linux user $USERNAME" >> $LOGFILE
-fi
-
-# Get UID for NFS compatibility
-UID=$(id -u "$USERNAME")
-if [[ -z "$UID" ]]; then
-  echo "Error: Failed to get UID for $USERNAME" | tee -a $LOGFILE
-  exit 1
-fi
-echo "[$(date)] User $USERNAME has UID $UID" >> $LOGFILE
-
-# Prompt for Samba password
-echo "Setting up Samba password for user '$USERNAME'. Enter a password for Samba access."
-smbpasswd -a "$USERNAME"
-if [[ $? -eq 0 ]]; then
-  echo "[$(date)] Set Samba password for user $USERNAME" >> $LOGFILE
-else
-  echo "Error: Failed to set Samba password for $USERNAME" | tee -a $LOGFILE
-  exit 1
-fi
-
-# Update Samba configuration
-SMB_CONF="/etc/samba/smb.conf"
-for SHARE in models projects backups isos; do
-  if ! grep -A 5 "\[${SHARE}\]" "$SMB_CONF" | grep -q "valid users.*$USERNAME" 2>/dev/null; then
-    sed -i "/\[${SHARE}\]/,/^\[/ s/valid users = heads/valid users = heads, $USERNAME/" "$SMB_CONF" 2>/dev/null || \
-    echo "Error: Failed to update Samba config for $SHARE" | tee -a $LOGFILE
-  else
-    echo "Warning: User $USERNAME already in Samba config for $SHARE, skipping" | tee -a $LOGFILE
-  fi
-done
-systemctl restart smbd
-if [[ $? -eq 0 ]]; then
-  echo "[$(date)] Updated Samba config and restarted smbd" >> $LOGFILE
-else
-  echo "Error: Failed to restart smbd" | tee -a $LOGFILE
-  exit 1
-fi
-
-# Ensure NFS compatibility (UID-based access via existing no_root_squash)
-EXPORTS_FILE="/etc/exports"
-if grep -q "/shared/.*10.0.0.0/24" "$EXPORTS_FILE"; then
-  exportfs -ra
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Refreshed NFS exports for UID $UID" >> $LOGFILE
-  else
-    echo "Error: Failed to refresh NFS exports" | tee -a $LOGFILE
+# Function to check if script is run as root
+check_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run with sudo" | tee -a $LOGFILE
     exit 1
   fi
-else
-  echo "Error: NFS exports not found in $EXPORTS_FILE" | tee -a $LOGFILE
-  exit 1
-fi
+}
 
-# Verify setup
-if id "$USERNAME" &>/dev/null && smbclient -L //10.0.0.13 -U "$USERNAME" -c 'exit' >/dev/null 2>&1; then
-  echo "User $USERNAME created and configured for Samba/NFS access" | tee -a $LOGFILE
-else
-  echo "Error: User setup verification failed" | tee -a $LOGFILE
-  exit 1
-fi
+# Prompt for username
+prompt_for_username() {
+  read -p "Enter new username for container/VM: " USERNAME
+  if [[ -z "$USERNAME" ]]; then
+    echo "Error: Username cannot be empty" | tee -a $LOGFILE
+    exit 1
+  fi
+
+  # Check if user already exists using getent for security reasons
+  if getent passwd "$USERNAME" &>/dev/null; then
+    echo "Warning: User $USERNAME already exists, skipping user creation" | tee -a $LOGFILE
+  else
+    create_user
+  fi
+}
+
+# Create Linux user without home directory or login shell
+create_user() {
+  useradd -M -s /bin/false "$USERNAME"
+  echo "[$(date)] Created Linux user $USERNAME" >> $LOGFILE
+}
+
+# Get UID for NFS compatibility
+get_uid() {
+  UID=$(id -u "$USERNAME")
+  if [[ -z "$UID" ]]; then
+    echo "Error: Failed to get UID for $USERNAME" | tee -a $LOGFILE
+    exit 1
+  fi
+  echo "[$(date)] User $USERNAME has UID $UID" >> $LOGFILE
+}
+
+# Prompt for Samba password
+setup_samba_password() {
+  echo "Setting up Samba password for user '$USERNAME'. Enter a password for Samba access."
+  smbpasswd -a "$USERNAME"
+  if [[ $? -eq 0 ]]; then
+    echo "[$(date)] Set Samba password for user $USERNAME" >> $LOGFILE
+  else
+    echo "Error: Failed to set Samba password for $USERNAME" | tee -a $LOGFILE
+    exit 1
+  fi
+}
+
+# Main script execution
+check_root
+prompt_for_username
+get_uid
+setup_samba_password
 
 echo "Setup complete for user '$USERNAME'."
 echo "- Samba access: \\\\10.0.0.13\\<dataset> (use '$USERNAME' and Samba password)"

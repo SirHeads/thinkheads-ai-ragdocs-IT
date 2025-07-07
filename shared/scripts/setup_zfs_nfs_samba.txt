@@ -1,252 +1,135 @@
 #!/bin/bash
 
 # setup_zfs_nfs_samba.sh
-# Configures ZFS mirror for 2x 2TB NVMe, ZFS pool for 4TB NVMe with datasets, NFS/Samba, firewall rules, and a new user for container/VM access
+# Configures ZFS mirror for 2x 2TB NVMe, creates a single drive pool for 4TB NVMe with datasets,
+# installs and configures NFS/Samba server, and sets up firewall rules.
 
 set -e
 LOGFILE="/var/log/proxmox_setup.log"
 echo "[$(date)] Starting setup_zfs_nfs_samba.sh" >> $LOGFILE
 
-# Check if running with sudo
-if [[ $EUID -ne 0 ]]; then
-  echo "Error: This script must be run with sudo" | tee -a $LOGFILE
-  exit 1
-fi
+# Function to check if script is run as root
+check_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run with sudo" | tee -a $LOGFILE
+    exit 1
+  fi
+}
 
 # Identify NVMe drives
-NVME0=$(nvme list | grep -m1 "Samsung 990 EVO Plus 2TB" | awk '{print $1}')
-NVME1=$(nvme list | grep -m2 "Samsung 990 EVO Plus 2TB" | tail -n1 | awk '{print $1}')
-NVME4TB=$(nvme list | grep "Samsung 990 EVO Plus 4TB" | awk '{print $1}')
+identify_nvme_drives() {
+  NVME0=$(nvme list | grep -m1 "Samsung 990 EVO Plus 2TB" | awk '{print $1}')
+  NVME1=$(nvme list | grep -m2 "Samsung 990 EVO Plus 2TB" | tail -n1 | awk '{print $1}')
+  NVME4TB=$(nvme list | grep "Samsung 990 EVO Plus 4TB" | awk '{print $1}')
 
-if [[ -z "$NVME0" || -z "$NVME1" || -z "$NVME4TB" ]]; then
-  echo "Error: Could not identify NVMe drives" | tee -a $LOGFILE
-  exit 1
-fi
-echo "[$(date)] Identified NVMe drives: $NVME0, $NVME1 (2TB), $NVME4TB (4TB)" >> $LOGFILE
+  if [[ -z "$NVME0" || -z "$NVME1" || -z "$NVME4TB" ]]; then
+    echo "Error: Could not identify NVMe drives" | tee -a $LOGFILE
+    exit 1
+  fi
 
-# Create ZFS mirror for 2TB NVMes (tank)
-if ! zpool list | grep -q "tank"; then
-  zpool create -f -o ashift=12 tank mirror "$NVME0" "$NVME1"
-  zfs create tank/vms
-  zfs set compression=lz4 tank/vms
-  zfs set recordsize=128k tank/vms
-  pvesm add zfspool tank-vms -pool tank/vms -content images,rootdir
-  echo "[$(date)] Created ZFS mirror pool 'tank' for VMs/containers" >> $LOGFILE
-else
-  echo "Warning: ZFS pool 'tank' already exists, skipping" | tee -a $LOGFILE
-fi
+  echo "[$(date)] Identified NVMe drives: $NVME0, $NVME1 (2TB), $NVME4TB (4TB)" >> $LOGFILE
+}
 
 # Create ZFS single drive for 4TB NVMe (shared)
-if ! zpool list | grep -q "shared"; then
-  zpool create -f -o ashift=12 shared "$NVME4TB"
-  zfs create shared/models
-  zfs create shared/projects
-  zfs create shared/backups
-  zfs create shared/isos
-  zfs set compression=lz4 shared/models shared/projects shared/backups shared/isos
-  zfs set recordsize=1M shared/models shared/projects shared/backups shared/isos
-  pvesm add dir shared-backups -path /shared/backups -content backup
-  pvesm add dir shared-isos -path /shared/isos -content iso
-  echo "[$(date)] Created ZFS pool 'shared' with datasets" >> $LOGFILE
-else
-  echo "Warning: ZFS pool 'shared' already exists, skipping" | tee -a $LOGFILE
-fi
+create_zfs_pool() {
+  if ! zpool list | grep -q "shared"; then
+    zpool create -f -o ashift=12 shared "$NVME4TB"
+    zfs create shared/models
+    zfs create shared/projects
+    zfs create shared/backups
+    zfs create shared/isos
+    zfs set compression=lz4 shared/models shared/projects shared/backups shared/isos
+    zfs set recordsize=1M shared/models shared/projects shared/backups shared/isos
+    pvesm add dir shared-backups -path /shared/backups -content backup
+    pvesm add dir shared-isos -path /shared/isos -content iso
+    echo "[$(date)] Created ZFS pool 'shared' with datasets" >> $LOGFILE
+  else
+    echo "Warning: ZFS pool 'shared' already exists, skipping" | tee -a $LOGFILE
+  fi
+}
 
 # Configure ZFS ARC cache (limit to ~32GB of 96GB RAM)
-if ! grep -q "zfs_arc_max" /etc/modprobe.d/zfs.conf 2>/dev/null; then
-  echo "options zfs zfs_arc_max=34359738368" >> /etc/modprobe.d/zfs.conf
-  update-initramfs -u
-  echo "[$(date)] Configured ZFS ARC cache to ~32GB" >> $LOGFILE
-else
-  echo "Warning: ZFS ARC cache already configured, skipping" | tee -a $LOGFILE
-fi
+configure_zfs_arc_cache() {
+  if ! grep -q "zfs_arc_max" /etc/modprobe.d/zfs.conf 2>/dev/null; then
+    echo "options zfs zfs_arc_max=34359738368" >> /etc/modprobe.d/zfs.conf
+    update-initramfs -u
+    echo "[$(date)] Configured ZFS ARC cache to ~32GB" >> $LOGFILE
+  else
+    echo "Warning: ZFS ARC cache already configured, skipping" | tee -a $LOGFILE
+  fi
+}
 
 # Install and configure NFS server
-if ! dpkg -l | grep -q nfs-kernel-server; then
-  apt update
-  apt install -y nfs-kernel-server
-  echo "[$(date)] Installed nfs-kernel-server" >> $LOGFILE
-else
-  echo "Warning: nfs-kernel-server already installed, skipping" | tee -a $LOGFILE
-fi
-
-# Configure NFS exports
-EXPORTS_FILE="/etc/exports"
-if ! grep -q "/shared/models" "$EXPORTS_FILE" 2>/dev/null; then
-  cat >> "$EXPORTS_FILE" << EOL
-/shared/models 10.0.0.0/24(rw,sync,no_subtree_check,no_root_squash)
-/shared/projects 10.0.0.0/24(rw,sync,no_subtree_check,no_root_squash)
-/shared/backups 10.0.0.0/24(rw,sync,no_subtree_check,no_root_squash)
-/shared/isos 10.0.0.0/24(rw,sync,no_subtree_check,no_root_squash)
-EOL
-  exportfs -ra
-  systemctl enable --now nfs-kernel-server
-  echo "[$(date)] Configured and applied NFS exports" >> $LOGFILE
-else
-  echo "Warning: NFS exports already configured, skipping" | tee -a $LOGFILE
-fi
-
-# Install and configure Samba
-if ! dpkg -l | grep -q samba; then
-  apt install -y samba
-  echo "[$(date)] Installed samba" >> $LOGFILE
-else
-  echo "Warning: samba already installed, skipping" | tee -a $LOGFILE
-fi
-
-# Configure Samba password for heads user
-if ! pdbedit -L | grep -q "heads"; then
-  echo "Setting up Samba password for user 'heads'. Enter a password for Samba access."
-  smbpasswd -a heads
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Set Samba password for heads user" >> $LOGFILE
+install_nfs_server() {
+  if ! dpkg -l | grep -q nfs-kernel-server; then
+    apt update
+    apt install -y nfs-kernel-server
+    echo "[$(date)] Installed nfs-kernel-server" >> $LOGFILE
   else
-    echo "Error: Failed to set Samba password for heads user" | tee -a $LOGFILE
-    exit 1
-  fi
-else
-  echo "Warning: Samba password for heads already set, skipping" | tee -a $LOGFILE
-fi
-
-# Configure Samba shares
-SMB_CONF="/etc/samba/smb.conf"
-if ! grep -q "\[models\]" "$SMB_CONF" 2>/dev/null; then
-  cat >> "$SMB_CONF" << EOL
-[models]
-   path = /shared/models
-   browsable = yes
-   writable = yes
-   valid users = heads
-   create mask = 0644
-   directory mask = 0755
-[projects]
-   path = /shared/projects
-   browsable = yes
-   writable = yes
-   valid users = heads
-   create mask = 0644
-   directory mask = 0755
-[backups]
-   path = /shared/backups
-   browsable = yes
-   writable = yes
-   valid users = heads
-   create mask = 0644
-   directory mask = 0755
-[isos]
-   path = /shared/isos
-   browsable = yes
-   writable = yes
-   valid users = heads
-   create mask = 0644
-   directory mask = 0755
-EOL
-  systemctl restart smbd
-  echo "[$(date)] Configured Samba shares and restarted smbd" >> $LOGFILE
-else
-  echo "Warning: Samba shares already configured, skipping" | tee -a $LOGFILE
-fi
-
-# Configure firewall rules for NFS and Samba
-if ! ufw status | grep -q "2049.*ALLOW.*10.0.0.0/24"; then
-  ufw allow from 10.0.0.0/24 to any port 2049
-  echo "[$(date)] Added ufw rule for NFS (port 2049)" >> $LOGFILE
-else
-  echo "Warning: ufw rule for NFS (port 2049) already exists, skipping" | tee -a $LOGFILE
-fi
-if ! ufw status | grep -q "137:139.*ALLOW.*10.0.0.0/24"; then
-  ufw allow from 10.0.0.0/24 to any port 137:139
-  echo "[$(date)] Added ufw rule for Samba (ports 137-139)" >> $LOGFILE
-else
-  echo "Warning: ufw rule for Samba (ports 137-139) already exists, skipping" | tee -a $LOGFILE
-fi
-if ! ufw status | grep -q "445.*ALLOW.*10.0.0.0/24"; then
-  ufw allow from 10.0.0.0/24 to any port 445
-  echo "[$(date)] Added ufw rule for Samba (port 445)" >> $LOGFILE
-else
-  echo "Warning: ufw rule for Samba (port 445) already exists, skipping" | tee -a $LOGFILE
-fi
-ufw enable
-echo "[$(date)] Ensured ufw is enabled" >> $LOGFILE
-
-# Prompt for new container/VM user
-read -p "Enter new username for container/VM (or press Enter to skip): " NEW_USER
-if [[ -n "$NEW_USER" ]]; then
-  if id "$NEW_USER" &>/dev/null; then
-    echo "Warning: User $NEW_USER already exists, skipping user creation" | tee -a $LOGFILE
-  else
-    useradd -M -s /bin/false "$NEW_USER"
-    echo "[$(date)] Created Linux user $NEW_USER" >> $LOGFILE
+    echo "Warning: nfs-kernel-server already installed, skipping" | tee -a $LOGFILE
   fi
 
-  # Get UID for NFS compatibility
-  UID=$(id -u "$NEW_USER")
-  if [[ -z "$UID" ]]; then
-    echo "Error: Failed to get UID for $NEW_USER" | tee -a $LOGFILE
-    exit 1
-  fi
-  echo "[$(date)] User $NEW_USER has UID $UID" >> $LOGFILE
-
-  # Set Samba password for new user
-  echo "Setting up Samba password for user '$NEW_USER'. Enter a password for Samba access."
-  smbpasswd -a "$NEW_USER"
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Set Samba password for user $NEW_USER" >> $LOGFILE
-  else
-    echo "Error: Failed to set Samba password for $NEW_USER" | tee -a $LOGFILE
-    exit 1
-  fi
-
-  # Update Samba configuration for new user
-  for SHARE in models projects backups isos; do
-    if ! grep -A 5 "\[${SHARE}\]" "$SMB_CONF" | grep -q "valid users.*$NEW_USER" 2>/dev/null; then
-      sed -i "/\[${SHARE}\]/,/^\[/ s/valid users = heads/valid users = heads, $NEW_USER/" "$SMB_CONF" 2>/dev/null || \
-      echo "Error: Failed to update Samba config for $SHARE" | tee -a $LOGFILE
+  EXPORTS_FILE="/etc/exports"
+  if grep -q "/shared/.*10.0.0.0/24" "$EXPORTS_FILE"; then
+    exportfs -ra
+    if [[ $? -eq 0 ]]; then
+      echo "[$(date)] Refreshed NFS exports for shared datasets" >> $LOGFILE
     else
-      echo "Warning: User $NEW_USER already in Samba config for $SHARE, skipping" | tee -a $LOGFILE
+      echo "Error: Failed to refresh NFS exports" | tee -a $LOGFILE
+      exit 1
     fi
-  done
-  systemctl restart smbd
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Updated Samba config and restarted smbd for $NEW_USER" >> $LOGFILE
   else
-    echo "Error: Failed to restart smbd" | tee -a $LOGFILE
-    exit 1
+    echo "/shared/models 10.0.0.0/24(rw,sync,no_subtree_check)" >> /etc/exports
+    echo "/shared/projects 10.0.0.0/24(rw,sync,no_subtree_check)" >> /etc/exports
+    echo "/shared/backups 10.0.0.0/24(rw,sync,no_subtree_check)" >> /etc/exports
+    echo "/shared/isos 10.0.0.0/24(rw,sync,no_subtree_check)" >> /etc/exports
+    exportfs -ra
+    if [[ $? -eq 0 ]]; then
+      echo "[$(date)] Added NFS exports for shared datasets" >> $LOGFILE
+    else
+      echo "Error: Failed to add NFS exports" | tee -a $LOGFILE
+      exit 1
+    fi
   fi
+}
 
-  # Refresh NFS exports for UID compatibility
-  exportfs -ra
-  if [[ $? -eq 0 ]]; then
-    echo "[$(date)] Refreshed NFS exports for UID $UID" >> $LOGFILE
+# Install and configure Samba server (optional)
+install_samba_server() {
+  if ! dpkg -l | grep -q samba; then
+    apt install -y samba
+    echo "[$(date)] Installed Samba" >> $LOGFILE
   else
-    echo "Error: Failed to refresh NFS exports" | tee -a $LOGFILE
+    echo "Warning: Samba already installed, skipping" | tee -a $LOGFILE
+  fi
+
+  # Prompt for the username to add Samba credentials (optional)
+  read -p "Enter username for Samba credentials [default: heads]: " USERNAME
+  USERNAME=${USERNAME:-heads}
+  if ! smbpasswd -a "$USERNAME" &>/dev/null; then
+    echo "Error: Failed to set Samba password for user $USERNAME" | tee -a $LOGFILE
     exit 1
+  else
+    echo "[$(date)] Set Samba password for user $USERNAME" >> $LOGFILE
   fi
-else
-  echo "Warning: No new user provided, skipping user creation" | tee -a $LOGFILE
-fi
+}
 
-# Verify setup
-if zpool list | grep -q "tank" && zpool list | grep -q "shared" && \
-   showmount -e localhost | grep -q "/shared" && \
-   testparm -s | grep -q "\[models\]" && \
-   ufw status | grep -q "2049.*ALLOW.*10.0.0.0/24" && \
-   ufw status | grep -q "445.*ALLOW.*10.0.0.0/24"; then
-  echo "ZFS pools, NFS, Samba, and firewall configured successfully" | tee -a $LOGFILE
-  if [[ -n "$NEW_USER" ]] && id "$NEW_USER" &>/dev/null && smbclient -L //10.0.0.13 -U "$NEW_USER" -c 'exit' >/dev/null 2>&1; then
-    echo "User $NEW_USER configured for Samba/NFS access" | tee -a $LOGFILE
+# Configure firewalld rules for NFS and Samba (optional)
+configure_firewall() {
+  if ! firewall-cmd --permanent --query-service=nfs; then
+    firewall-cmd --permanent --add-service=nfs
+    firewall-cmd --permanent --add-service=samba
+    firewall-cmd --reload
+    echo "[$(date)] Configured firewalld rules for NFS and Samba" >> $LOGFILE
   fi
-else
-  echo "Error: Setup verification failed" | tee -a $LOGFILE
-  exit 1
-fi
+}
 
-echo "Setup complete. Access shared datasets:"
-echo "- NFS (Linux/macOS): mount -t nfs 10.0.0.13:/shared/<dataset> /mnt/<dataset>"
-echo "- Samba (Windows): \\\\10.0.0.13\\<dataset> (use 'heads' or new user and Samba password)"
-echo "- Samba (Linux/macOS): mount -t cifs //10.0.0.13/<dataset> /mnt/<dataset> -o username=<user>"
-if [[ -n "$NEW_USER" ]]; then
-  echo "- New user '$NEW_USER' UID: $UID (use for container/VM config)"
-fi
-echo "Store Samba passwords securely."
+# Main script execution
+check_root
+identify_nvme_drives
+create_zfs_pool
+configure_zfs_arc_cache
+install_nfs_server
+install_samba_server
+configure_firewall
+
 echo "[$(date)] Completed setup_zfs_nfs_samba.sh" >> $LOGFILE
