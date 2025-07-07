@@ -38,19 +38,18 @@ This hardware supports demanding workloads with room for upgrades (e.g., AMD 109
 The repository is organized for clarity and ease of use:
 
 - **`docs/`**: Configuration and hardware documentation
-  - `proxmox_install_settings.markdown`: Proxmox VE installation details (ZFS mirror, network config)
-  - `proxmox_storage_config.markdown`: ZFS storage setup for container/VM and shared storage
-  - `server_hardware_markdown`: Hardware specifications and upgrade paths
+  - `notes_proxmox_install_settings.markdown`: Proxmox VE installation details (ZFS mirror, network config)
+  - `notes_proxmox_storage_config.markdown`: ZFS storage setup for container/VM and shared storage
+  - `notes_server_hardware_markdown`: Hardware specifications and upgrade paths
 - **`scripts/`**: Automation scripts for Proxmox VE setup
-  - `common.txt`: Shared functions for error handling and logging
-  - `proxmox_create_admin_user.txt`: Creates a non-root admin user with SSH and Proxmox privileges
-  - `proxmox_setup_zfs_nfs_samba.txt`: Configures ZFS pools, NFS/Samba, and firewall
-  - `proxmox_setup_nvidia_gpu_virt.txt`: Sets up NVIDIA GPU virtualization (driver 575.57.08, CUDA 12.9)
-  - `proxmox_create_lxc_user.txt`: Creates users for LXC containers/VMs with NFS/Samba access
+  - `common.sh`: Shared functions for error handling and logging
+  - `proxmox_create_admin_user.sh`: Creates a non-root admin user with SSH and Proxmox privileges
+  - `proxmox_setup_zfs_nfs_samba.sh`: Configures ZFS pools, NFS/Samba, and firewall
+  - `proxmox_setup_nvidia_gpu_virt.sh`: Sets up NVIDIA GPU virtualization (driver 575.57.08, CUDA 12.9)
+  - `proxmox_create_lxc_user.sh`: Creates users for LXC containers/VMs with NFS/Samba access
   - `README.md`: Detailed instructions for script usage
 - **`README.TXT`**: This file, providing a high-level overview
 
-**Note**: Scripts are stored as `.txt` for upload compatibility but should be renamed to `.sh` for execution (e.g., `mv proxmox_create_admin_user.txt proxmox_create_admin_user.sh`).
 
 ## Setup Process
 
