@@ -1,13 +1,17 @@
 #!/bin/bash
 
 # proxmox_setup_nvidia_gpu_virt.sh
-# Configures NVIDIA GPU virtualization on Proxmox VE with AMD CPU, using NVIDIA driver 575.57.08 and CUDA 12.9
-# Version: 1.1.0
+# Configures NVIDIA GPU virtualization on Proxmox VE with AMD CPU, using NVIDIA driver and CUDA 12.9
+# Version: 1.1.1
 # Author: Heads, Grok, Devstral
 # Usage: ./proxmox_setup_nvidia_gpu_virt.sh [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
 # Source common functions
+if [[ ! -f /usr/local/bin/common.sh ]]; then
+  echo "Error: /usr/local/bin/common.sh does not exist" | tee -a "$LOGFILE"
+  exit 1
+fi
 source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; exit 1; }
 
 # Parse command-line arguments
@@ -27,7 +31,11 @@ done
 
 # Update and upgrade system
 update_system() {
-  retry_command "apt-get update"
+  retry_command "apt-get update" || {
+    echo "Error: apt-get update failed. Check /var/log/proxmox_setup.log for details" | tee -a "$LOGFILE"
+    cat /var/log/apt/term.log >> "$LOGFILE" 2>/dev/null
+    exit 1
+  }
   retry_command "apt-get upgrade -y"
   echo "[$(date)] System updated and upgraded" >> "$LOGFILE"
 }
@@ -44,7 +52,7 @@ install_kernel_headers() {
 
 # Verify NVIDIA GPUs
 verify_nvidia_gpus() {
-  if ! lspci | grep -i nvidia | grep -q "5060 TI"; then
+  if ! lspci | grep -i nvidia | grep -q "5060"; then
     echo "Warning: NVIDIA 5060 TI GPUs not detected. Check 'lspci' output" | tee -a "$LOGFILE"
   else
     echo "[$(date)] Detected NVIDIA 5060 TI GPUs" >> "$LOGFILE"
@@ -53,22 +61,27 @@ verify_nvidia_gpus() {
 
 # Add NVIDIA repository (Debian 12 Bookworm)
 add_nvidia_repository() {
-  if ! grep -q 'nvidia' /etc/apt/sources.list.d/nvidia-sources.list 2>/dev/null; then
+  if ! grep -q 'nvidia' /etc/apt/sources.list.d/nvidia-c CUDA.list 2>/dev/null; then
     retry_command "curl -s -L https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-debian12.pin -o /etc/apt/preferences.d/cuda-repository-pin-600"
-    retry_command "apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/3bf863cc.pub"
-    retry_command "add-apt-repository 'deb https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/ /' -y"
-    retry_command "apt-get update"
+    retry_command "curl -s -L https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/3bf863cc.pub -o /usr/share/keyrings/nvidia-cuda-keyring.gpg"
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/ /" | \
+      retry_command "tee /etc/apt/sources.list.d/nvidia-cuda.list"
+    retry_command "apt-get update" || {
+      echo "Error: apt-get update failed. Check /var/log/proxmox_setup.log for details" | tee -a "$LOGFILE"
+      cat /var/log/apt/term.log >> "$LOGFILE" 2>/dev/null
+      exit 1
+    }
     echo "[$(date)] Added NVIDIA repository for Debian 12" >> "$LOGFILE"
   else
     echo "NVIDIA repository already added, skipping" | tee -a "$LOGFILE"
   fi
 }
 
-# Install NVIDIA driver 575.57.08 and CUDA 12.9
+# Install NVIDIA driver and CUDA 12.9
 install_nvidia_drivers() {
   if ! check_package nvidia-driver; then
-    retry_command "apt-get install -y nvidia-driver=575.57.08"
-    echo "[$(date)] Installed NVIDIA driver 575.57.08" >> "$LOGFILE"
+    retry_command "apt-get install -y nvidia-driver"
+    echo "[$(date)] Installed NVIDIA driver" >> "$LOGFILE"
   fi
   if ! check_package cuda-12-9; then
     retry_command "apt-get install -y cuda-12-9"
@@ -133,7 +146,7 @@ add_vfio_modules
 update_kernel_command_line
 final_system_updates
 
-echo "NVIDIA GPU virtualization setup complete (Driver: 575.57.08, CUDA: 12.9)."
+echo "NVIDIA GPU virtualization setup complete (Driver: latest, CUDA: 12.9)."
 echo "- Reboot required to apply changes."
 echo "- Proxmox VE web interface: https://10.0.0.13:8006"
 if [[ $NO_REBOOT -eq 0 ]]; then

@@ -2,81 +2,62 @@
 
 # common.sh
 # Shared functions for Proxmox VE setup scripts
-# Version: 1.1.2
+# Version: 1.1.1
 # Author: Heads, Grok, Devstral
+# Usage: Source this script in other setup scripts to use common functions
+# Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
-# Log file
+# Constants
 LOGFILE="/var/log/proxmox_setup.log"
+readonly LOGFILE
+LOGDIR=$(dirname "$LOGFILE")
 
-# Retry command with delay
-retry_command() {
-  local cmd="$*"
-  local retries=3
-  local delay=5
-  local count=0
-
-  until [ $count -ge $retries ]; do
-    eval "$cmd" && return 0
-    count=$((count + 1))
-    echo "[$(date)] Command failed: $cmd (attempt $count/$retries)" >> "$LOGFILE"
-    sleep $delay
-  done
-  echo "[$(date)] Command failed after $retries attempts: $cmd" >> "$LOGFILE"
-  return 1
+# Ensure log directory exists and is writable
+setup_logging() {
+  mkdir -p "$LOGDIR" || { echo "Error: Failed to create log directory $LOGDIR"; exit 1; }
+  touch "$LOGFILE" || { echo "Error: Failed to create log file $LOGFILE"; exit 1; }
+  chmod 664 "$LOGFILE" || { echo "Error: Failed to set permissions on $LOGFILE"; exit 1; }
+  echo "[$(date)] Initialized logging for $(basename "$0")" >> "$LOGFILE"
 }
 
-# Check if package is installed and verify critical binaries
-check_package() {
-  local package="$1"
-  local binaries=()
-  case $package in
-    samba)
-      binaries=("smbd" "pdbedit" "smbpasswd")
-      ;;
-    nfs-kernel-server)
-      binaries=("rpc.nfsd" "exportfs")
-      ;;
-    firewalld)
-      binaries=("firewall-cmd")
-      ;;
-    sudo)
-      binaries=("sudo")
-      ;;
-    iptables)
-      binaries=("iptables")
-      ;;
-    *)
-      binaries=("$package")
-      ;;
-  esac
-
-  # Check if package is installed
-  if dpkg -l "$package" &>/dev/null; then
-    # Verify all required binaries are present
-    for bin in "${binaries[@]}"; do
-      if ! command -v "$bin" &>/dev/null; then
-        echo "[$(date)] Package $package is installed but binary $bin is missing" >> "$LOGFILE"
-        return 1
-      fi
-    done
-    echo "[$(date)] Package $package and required binaries are installed" >> "$LOGFILE"
-    return 0
-  fi
-  echo "[$(date)] Package $package is not installed" >> "$LOGFILE"
-  return 1
-}
-
-# Check if running as root
+# Check if script is run as root
 check_root() {
   if [[ $EUID -ne 0 ]]; then
-    echo "Error: This script must be run as root" | tee -a "$LOGFILE"
+    echo "Error: This script must be run with sudo" | tee -a "$LOGFILE"
     exit 1
   fi
 }
 
-# Check if service is active
-systemctl_is_active() {
-  local service="$1"
-  systemctl is-active --quiet "$service" && return 0
+# Retry a command up to 3 times with delay, capturing error output
+retry_command() {
+  local cmd="$1"
+  local retries=3
+  local delay=5
+  local count=0
+  local error_output
+
+  until error_output=$(eval "$cmd" 2>&1 >> "$LOGFILE"); do
+    count=$((count + 1))
+    if [[ $count -ge $retries ]]; then
+      echo "Error: Command failed after $retries attempts: $cmd" | tee -a "$LOGFILE"
+      echo "Error output: $error_output" | tee -a "$LOGFILE"
+      exit 1
+    fi
+    echo "Warning: Command failed, retrying ($count/$retries)... Error: $error_output" | tee -a "$LOGFILE"
+    sleep "$delay"
+  done
+  echo "[$(date)] Successfully executed: $cmd" >> "$LOGFILE"
+}
+
+# Check if a package is installed
+check_package() {
+  local package="$1"
+  if dpkg -l | grep -q "$package"; then
+    echo "Package $package already installed, skipping" | tee -a "$LOGFILE"
+    return 0
+  fi
   return 1
 }
+
+# Initialize logging
+setup_logging
