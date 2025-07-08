@@ -166,7 +166,7 @@ install_samba_server() {
   for bin in pdbedit smbpasswd; do
     if ! command -v "$bin" &>/dev/null; then
       echo "Error: Samba binary $bin not found after installation" | tee -a "$LOGFILE"
-      retry_command "apt install -y samba-common-bin" || { echo "Error: Failed to install samba-common-bin"; exit 1; }
+      retry_command "apt install -y samba-common-bin" || { echo "Error: Failed to install samba-common-bin"; exit 1pls; }
     fi
   done
 
@@ -181,22 +181,30 @@ install_samba_server() {
     exit 1
   fi
 
+  # Prompt for Samba password if not provided
+  local samba_password
+  read -s -p "Enter Samba password for user $USERNAME (min 8 chars): " samba_password
+  echo
+  if [[ ${#samba_password} -lt 8 ]]; then
+    echo "Error: Samba password must be at least 8 characters long" | tee -a "$LOGFILE"
+    exit 1
+  fi
+
   # Check if Samba user already exists
   if pdbedit -L | grep -q "^$USERNAME:"; then
     echo "Warning: Samba user $USERNAME already exists, updating password" | tee -a "$LOGFILE"
-    if ! smbpasswd -s -a "$USERNAME"; then
+    if ! echo "$samba_password" | smbpasswd -s -a "$USERNAME" 2>>"$LOGFILE"; then
       echo "Error: Failed to update Samba password for user $USERNAME" | tee -a "$LOGFILE"
       exit 1
     fi
   else
-    # Prompt for Samba password
     echo "Setting Samba password for user $USERNAME"
-    if ! smbpasswd -s -a "$USERNAME"; then
+    if ! echo "$samba_password" | smbpasswd -s -a "$USERNAME" 2>>"$LOGFILE"; then
       echo "Error: Failed to set Samba password for user $USERNAME" | tee -a "$LOGFILE"
       exit 1
     fi
-    echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
   fi
+  echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
 
   # Configure Samba shares for ZFS datasets
   local smb_conf="/etc/samba/smb.conf"
