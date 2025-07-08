@@ -2,9 +2,9 @@
 
 # proxmox_create_admin_user.sh
 # Creates a non-root Linux user with sudo and Proxmox admin privileges, sets up SSH key-based authentication
-# Version: 1.3.0
+# Version: 1.4.0
 # Author: Heads, Grok, Devstral
-# Usage: ./proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>]
+# Usage: ./proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>] [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
 # Source common functions
@@ -13,6 +13,7 @@ source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; e
 # Default values
 DEFAULT_USERNAME="heads"
 DEFAULT_SSH_PORT=22
+NO_REBOOT=0
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       SSH_PORT="$2"
       shift 2
       ;;
+    --no-reboot)
+      NO_REBOOT=1
+      shift
+      ;;
     *)
       echo "Error: Unknown option $1" | tee -a "$LOGFILE"
       exit 1
@@ -50,15 +55,6 @@ setup_sudo() {
   if ! getent group sudo &>/dev/null; then
     groupadd sudo || { echo "Error: Failed to create sudo group"; exit 1; }
     echo "[$(date)] Created sudo group" >> "$LOGFILE"
-  fi
-}
-
-# Install Samba package
-install_samba() {
-  if ! check_package samba; then
-    retry_command "apt update"
-    retry_command "apt install -y samba"
-    echo "[$(date)] Installed Samba package" >> "$LOGFILE"
   fi
 }
 
@@ -131,15 +127,35 @@ configure_ssh_port() {
   fi
 }
 
+# Update and upgrade system
+update_system() {
+  retry_command "apt-get update"
+  retry_command "apt-get upgrade -y"
+  retry_command "proxmox-boot-tool refresh"
+  retry_command "update-initramfs -u"
+  echo "[$(date)] System updated, upgraded, and initramfs refreshed" >> "$LOGFILE"
+}
+
 # Main execution
 check_root
 setup_sudo
-install_samba
 prompt_for_username
 create_user
 configure_ssh_port
+update_system
 
 echo "Setup complete for admin user '$USERNAME'."
 echo "- SSH access: ssh $USERNAME@10.0.0.13 -p $SSH_PORT"
 echo "- Proxmox VE web interface: https://10.0.0.13:8006"
+if [[ $NO_REBOOT -eq 0 ]]; then
+  read -t 60 -p "Reboot now? (y/n) [Timeout in 60s]: " REBOOT_CONFIRMATION
+  if [[ -z "$REBOOT_CONFIRMATION" || "$REBOOT_CONFIRMATION" == "y" || "$REBOOT_CONFIRMATION" == "Y" ]]; then
+    echo "Rebooting system..."
+    reboot
+  else
+    echo "Please reboot manually to apply changes."
+  fi
+else
+  echo "Reboot skipped due to --no-reboot flag. Please reboot manually."
+fi
 echo "[$(date)] Completed proxmox_create_admin_user.sh" >> "$LOGFILE"

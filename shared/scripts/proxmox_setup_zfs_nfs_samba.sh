@@ -2,9 +2,9 @@
 
 # proxmox_setup_zfs_nfs_samba.sh
 # Configures ZFS pools for NVMe drives, sets up NFS and Samba servers, and configures firewall
-# Version: 1.2.0
+# Version: 1.5.0
 # Author: Heads, Grok, Devstral
-# Usage: ./proxmox_setup_zfs_nfs_samba.sh [--username <username>]
+# Usage: ./proxmox_setup_zfs_nfs_samba.sh [--username <username>] [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
 # Source common functions
@@ -16,35 +16,70 @@ ZFS_4TB_POOL="fastData"
 DEFAULT_USERNAME="heads"
 NFS_SUBNET="10.0.0.0/24"
 EXPORTS_FILE="/etc/exports"
+NO_REBOOT=0
+DEFAULT_ARC_SIZE_MB=9000  # Default ARC size in MB (~9GB)
 
-# Identify NVMe drives using lsblk
-identify_nvme_drives() {
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --username)
+      USERNAME="$2"
+      shift 2
+      ;;
+    --no-reboot)
+      NO_REBOOT=1
+      shift
+      ;;
+    *)
+      echo "Error: Unknown option $1" | tee -a "$LOGFILE"
+      exit 1
+      ;;
+  esac
+done
+
+# Interactively select NVMe drives
+select_nvme_drives() {
   # List NVMe drives and their sizes
-  mapfile -t NVME_DRIVES < <(lsblk -d -o NAME,SIZE -b | grep '^nvme' | awk '{print $1 " " $2}')
+  mapfile -t NVME_DRIVES < <(lsblk -d -o NAME,SIZE,MODEL -b | grep '^nvme' | awk '{print $1 " " $2 " " $3}')
   
-  # Find 2TB and 4TB drives
-  NVME_2TB=()
-  NVME_4TB=""
-  for drive in "${NVME_DRIVES[@]}"; do
-    name=$(echo "$drive" | awk '{print $1}')
-    size=$(echo "$drive" | awk '{print $2}')
-    # Convert sizes to bytes (2TB ~ 2,000,000,000,000 bytes, 4TB ~ 4,000,000,000,000 bytes)
-    if [[ $size -ge 1900000000000 && $size -le 2100000000000 ]]; then
-      NVME_2TB+=("/dev/$name")
-    elif [[ $size -ge 3900000000000 && $size -le 4100000000000 ]]; then
-      NVME_4TB="/dev/$name"
-    fi
-  done
-
-  # Validate: Expect exactly two 2TB drives and one 4TB drive
-  if [[ ${#NVME_2TB[@]} -ne 2 || -z "$NVME_4TB" ]]; then
-    echo "Error: Expected two 2TB NVMe drives and one 4TB NVMe drive. Found ${#NVME_2TB[@]} 2TB drives and ${NVME_4TB:+1}${NVME_4TB:-0} 4TB drive(s)." | tee -a "$LOGFILE"
+  if [[ ${#NVME_DRIVES[@]} -lt 3 ]]; then
+    echo "Error: At least three NVMe drives are required. Found ${#NVME_DRIVES[@]}." | tee -a "$LOGFILE"
     exit 1
   fi
-  echo "[ Eng$(date)] Identified NVMe drives: ${NVME_2TB[0]}, ${NVME_2TB[1]} (2TB), $NVME_4TB (4TB)" >> "$LOGFILE"
+
+  echo "Available NVMe drives:"
+  for i in "${!NVME_DRIVES[@]}"; do
+    name=$(echo "${NVME_DRIVES[$i]}" | awk '{print $1}')
+    size=$(echo "${NVME_DRIVES[$i]}" | awk '{print $2}')
+    model=$(echo "${NVME_DRIVES[$i]}" | awk '{print $3}')
+    size_gb=$((size / 1024 / 1024 / 1024))
+    echo "[$i] /dev/$name ($size_gb GB, $model)"
+  done
+
+  # Select two drives for mirror (quickOS)
+  NVME_2TB=()
+  echo "Select two drives for mirrored ZFS pool '$ZFS_2TB_POOL' (enter two numbers, space-separated):"
+  read -r drive1 drive2
+  if [[ -z "$drive1" || -z "$drive2" || "$drive1" == "$drive2" || $drive1 -ge ${#NVME_DRIVES[@]} || $drive2 -ge ${#NVME_DRIVES[@]} ]]; then
+    echo "Error: Invalid selection for mirrored drives" | tee -a "$LOGFILE"
+    exit 1
+  fi
+  NVME_2TB+=("/dev/$(echo "${NVME_DRIVES[$drive1]}" | awk '{print $1}')")
+  NVME_2TB+=("/dev/$(echo "${NVME_DRIVES[$drive2]}" | awk '{print $1}')")
+
+  # Select one drive for single pool (fastData)
+  echo "Select one drive for single ZFS pool '$ZFS_4TB_POOL' (enter one number):"
+  read -r drive3
+  if [[ -z "$drive3" || $drive3 -ge ${#NVME_DRIVES[@]} || $drive3 == "$drive1" || $drive3 == "$drive2" ]]; then
+    echo "Error: Invalid selection for single drive" | tee -a "$LOGFILE"
+    exit 1
+  fi
+  NVME_4TB="/dev/$(echo "${NVME_DRIVES[$drive3]}" | awk '{print $1}')"
+
+  echo "[$(date)] Selected NVMe drives: ${NVME_2TB[0]}, ${NVME_2TB[1]} for $ZFS_2TB_POOL; $NVME_4TB for $ZFS_4TB_POOL" >> "$LOGFILE"
 }
 
-# Create ZFS mirror for 2TB NVMe drives
+# Create ZFS mirror for selected NVMe drives
 create_zfs_mirror() {
   if ! zpool list | grep -q "$ZFS_2TB_POOL"; then
     retry_command "zpool create -f -o ashift=12 $ZFS_2TB_POOL mirror ${NVME_2TB[0]} ${NVME_2TB[1]}"
@@ -54,11 +89,11 @@ create_zfs_mirror() {
     retry_command "pvesm add zfspool tank-vms -pool $ZFS_2TB_POOL/vms -content images,rootdir"
     echo "[$(date)] Created ZFS mirror pool '$ZFS_2TB_POOL' for VMs/containers" >> "$LOGFILE"
   else
-    echo "Warning: ZFS pool '$ZFS_2TB_POOL' already exists, skipping" | tee", -a "$LOGFILE"
+    echo "Warning: ZFS pool '$ZFS_2TB_POOL' already exists, skipping" | tee -a "$LOGFILE"
   fi
 }
 
-# Create ZFS single drive for 4TB NVMe
+# Create ZFS single drive for selected NVMe
 create_zfs_single() {
   if ! zpool list | grep -q "$ZFS_4TB_POOL"; then
     retry_command "zpool create -f -o ashift=12 $ZFS_4TB_POOL $NVME_4TB"
@@ -78,14 +113,24 @@ create_zfs_single() {
 # Configure ZFS ARC cache
 configure_zfs_arc_cache() {
   local ram_total=$(free -b | awk '/Mem:/ {print $2}')
-  local arc_max=$((ram_total / 3))  # Limit to ~1/3 of total RAM
-  if ! grep -q "zfs_arc_max" /etc/modprobe.d/zfs.conf 2>/dev/null; then
-    echo "options zfs zfs_arc_max=$arc_max" >> /etc/modprobe.d/zfs.conf || { echo "Error: Failed to configure ZFS ARC cache"; exit 1; }
-    retry_command "update-initramfs -u"
-    echo "[$(date)] Configured ZFS ARC cache to ~$(($arc_max / 1024 / 1024 / 1024))GB" >> "$LOGFILE"
-  else
-    echo "Warning: ZFS ARC cache already configured, skipping" | tee -a "$LOGFILE"
+  local ram_total_mb=$((ram_total / 1024 / 1024))
+  local arc_size_mb
+
+  # Prompt for ARC size
+  echo "Total system RAM: $ram_total_mb MB"
+  read -p "Enter ZFS ARC cache size in MB [$DEFAULT_ARC_SIZE_MB]: " arc_size_mb
+  arc_size_mb=${arc_size_mb:-$DEFAULT_ARC_SIZE_MB}
+
+  # Validate ARC size
+  if [[ ! $arc_size_mb =~ ^[0-9]+$ || $arc_size_mb -le 0 || $arc_size_mb -gt $ram_total_mb ]]; then
+    echo "Error: ARC size must be a positive number not exceeding total RAM ($ram_total_mb MB)" | tee -a "$LOGFILE"
+    exit 1
   fi
+
+  local arc_size_bytes=$((arc_size_mb * 1024 * 1024))
+  echo "options zfs zfs_arc_max=$arc_size_bytes" > /etc/modprobe.d/zfs.conf || { echo "Error: Failed to configure ZFS ARC cache"; exit 1; }
+  retry_command "update-initramfs -u"
+  echo "[$(date)] Configured ZFS ARC cache to $arc_size_mb MB (~$((arc_size_mb / 1024))GB)" >> "$LOGFILE"
 }
 
 # Install and configure NFS server
@@ -140,8 +185,27 @@ install_samba_server() {
     echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
   fi
 
+  # Configure Samba shares for ZFS datasets
+  local smb_conf="/etc/samba/smb.conf"
+  for dataset in models projects backups isos; do
+    if ! grep -q "path = /$ZFS_4TB_POOL/$dataset" "$smb_conf" 2>/dev/null; then
+      cat << EOF >> "$smb_conf"
+[$dataset]
+   path = /$ZFS_4TB_POOL/$dataset
+   writable = yes
+   browsable = yes
+   valid users = $USERNAME
+   create mask = 0644
+   directory mask = 0755
+EOF
+      echo "[$(date)] Added Samba share for $dataset" >> "$LOGFILE"
+    else
+      echo "Warning: Samba share for $dataset already configured, skipping" | tee -a "$LOGFILE"
+    fi
+  done
+
   # Ensure Samba service is running
-  if ! systemctl is-active --quiet samba; then
+  if ! systemctl_is_active --quiet samba; then
     retry_command "systemctl enable --now samba"
     echo "[$(date)] Enabled and started Samba service" >> "$LOGFILE"
   fi
@@ -163,25 +227,46 @@ configure_firewall() {
       retry_command "firewall-cmd --permanent --add-service=$service"
       echo "[$(date)] Added firewall rule for $service (ports: nfs=2049,111; samba=137-139,445)" >> "$LOGFILE"
     else
-      echo "Firewall rule for $service already exists, skipping" | tee -a "$LOGFILE"
+      echo "Warning: Firewall rule for $service already exists, skipping" | tee -a "$LOGFILE"
     fi
   done
   retry_command "firewall-cmd --reload"
   echo "[$(date)] Applied firewall rules" >> "$LOGFILE"
 }
 
+# Update and upgrade system
+update_system() {
+  retry_command "apt-get update"
+  retry_command "apt-get upgrade -y"
+  retry_command "proxmox-boot-tool refresh"
+  retry_command "update-initramfs -u"
+  echo "[$(date)] System updated, upgraded, and initramfs refreshed" >> "$LOGFILE"
+}
+
 # Main execution
 check_root
-identify_nvme_drives
+select_nvme_drives
 create_zfs_mirror
 create_zfs_single
 configure_zfs_arc_cache
 install_nfs_server
 install_samba_server
 configure_firewall
+update_system
 
 echo "Setup complete for ZFS, NFS, and Samba."
 echo "- NFS access: mount -t nfs 10.0.0.13:/$ZFS_4TB_POOL/<dataset> /mnt/<dataset>"
 echo "- Samba access: \\\\10.0.0.13\\<dataset> (use '$USERNAME' and Samba password)"
 echo "- Proxmox VE web interface: https://10.0.0.13:8006"
+if [[ $NO_REBOOT -eq 0 ]]; then
+  read -t 60 -p "Reboot now? (y/n) [Timeout in 60s]: " REBOOT_CONFIRMATION
+  if [[ -z "$REBOOT_CONFIRMATION" || "$REBOOT_CONFIRMATION" == "y" || "$REBOOT_CONFIRMATION" == "Y" ]]; then
+    echo "Rebooting system..."
+    reboot
+  else
+    echo "Please reboot manually to apply changes."
+  fi
+else
+  echo "Reboot skipped due to --no-reboot flag. Please reboot manually."
+fi
 echo "[$(date)] Completed proxmox_setup_zfs_nfs_samba.sh" >> "$LOGFILE"
