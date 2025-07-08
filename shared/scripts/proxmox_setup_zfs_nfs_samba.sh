@@ -2,7 +2,7 @@
 
 # proxmox_setup_zfs_nfs_samba.sh
 # Configures ZFS pools for NVMe drives, sets up NFS and Samba servers, and configures firewall
-# Version: 1.5.2
+# Version: 1.5.6
 # Author: Heads, Grok, Devstral
 # Usage: ./proxmox_setup_zfs_nfs_samba.sh [--username <username>] [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -155,20 +155,51 @@ install_nfs_server() {
 
 # Install and configure Samba server with enhanced error handling
 install_samba_server() {
-  # Install samba and samba-common-bin
-  if ! check_package samba; then
-    retry_command "apt update"
-    retry_command "apt install -y samba samba-common-bin"
+  # Check and install both samba and samba-common-bin
+  if ! check_package samba || ! check_package samba-common-bin; then
+    retry_command "apt update" || { echo "Error: Failed to update package lists" | tee -a "$LOGFILE"; exit 1; }
+    retry_command "apt install -y samba samba-common-bin" || { echo "Error: Failed to install samba and samba-common-bin" | tee -a "$LOGFILE"; exit 1; }
     echo "[$(date)] Installed samba and samba-common-bin" >> "$LOGFILE"
+  else
+    echo "[$(date)] Samba and samba-common-bin already installed" >> "$LOGFILE"
   fi
 
-  # Verify critical Samba binaries
-  for bin in pdbedit smbpasswd; do
-    if ! command -v "$bin" &>/dev/null; then
-      echo "Error: Samba binary $bin not found after installation" | tee -a "$LOGFILE"
-      retry_command "apt install -y samba-common-bin" || { echo "Error: Failed to install samba-common-bin"; exit 1pls; }
+  # Verify critical Samba binary (smbpasswd only)
+  if ! command -v smbpasswd &>/dev/null; then
+    echo "Error: Samba binary smbpasswd not found after installation" | tee -a "$LOGFILE"
+    # Attempt to fix by reinstalling samba-common-bin
+    retry_command "apt install --reinstall -y samba-common-bin" || { echo "Error: Failed to reinstall samba-common-bin" | tee -a "$LOGFILE"; exit 1; }
+    # Re-check binary after reinstall
+    if ! command -v smbpasswd &>/dev/null; then
+      echo "Error: Samba binary smbpasswd still not found after reinstall" | tee -a "$LOGFILE"
+      exit 1
     fi
-  done
+    echo "[$(date)] Verified Samba binary smbpasswd is available" >> "$LOGFILE"
+  fi
+
+  # Check if smbd.service exists, create it if missing
+  if ! [ -f /lib/systemd/system/smbd.service ]; then
+    echo "Warning: smbd.service not found at /lib/systemd/system/smbd.service, creating it" | tee -a "$LOGFILE"
+    cat << EOF > /lib/systemd/system/smbd.service
+[Unit]
+Description=Samba SMB Daemon
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/sbin/smbd --foreground --no-process-group
+ExecReload=/bin/kill -HUP \$MAINPID
+PIDFile=/run/smbd.pid
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    retry_command "systemctl daemon-reload" || { echo "Error: Failed to reload systemd daemon" | tee -a "$LOGFILE"; exit 1; }
+    echo "[$(date)] Created smbd.service file" >> "$LOGFILE"
+  else
+    echo "[$(date)] Verified smbd.service exists" >> "$LOGFILE"
+  fi
 
   if [[ -z "$USERNAME" ]]; then
     read -p "Enter username for Samba credentials [$DEFAULT_USERNAME]: " USERNAME
@@ -181,30 +212,23 @@ install_samba_server() {
     exit 1
   fi
 
-  # Prompt for Samba password if not provided
-  local samba_password
-  read -s -p "Enter Samba password for user $USERNAME (min 8 chars): " samba_password
-  echo
-  if [[ ${#samba_password} -lt 8 ]]; then
-    echo "Error: Samba password must be at least 8 characters long" | tee -a "$LOGFILE"
-    exit 1
-  fi
-
-  # Check if Samba user already exists
-  if pdbedit -L | grep -q "^$USERNAME:"; then
-    echo "Warning: Samba user $USERNAME already exists, updating password" | tee -a "$LOGFILE"
-    if ! echo "$samba_password" | smbpasswd -s -a "$USERNAME" 2>>"$LOGFILE"; then
-      echo "Error: Failed to update Samba password for user $USERNAME" | tee -a "$LOGFILE"
+  # Attempt to add or update Samba user
+  if ! echo -e "$USERNAME\n$USERNAME" | smbpasswd -s -a "$USERNAME" 2>/tmp/smbpasswd_error; then
+    if grep -q "Failed to add entry for user" /tmp/smbpasswd_error; then
+      echo "Warning: Samba user $USERNAME already exists, updating password" | tee -a "$LOGFILE"
+      if ! echo -e "$USERNAME\n$USERNAME" | smbpasswd -s "$USERNAME"; then
+        echo "Error: Failed to update Samba password for user $USERNAME" | tee -a "$LOGFILE"
+        exit 1
+      fi
+    else
+      echo "Error: Failed to add Samba user $USERNAME" | tee -a "$LOGFILE"
+      cat /tmp/smbpasswd_error | tee -a "$LOGFILE"
       exit 1
     fi
   else
-    echo "Setting Samba password for user $USERNAME"
-    if ! echo "$samba_password" | smbpasswd -s -a "$USERNAME" 2>>"$LOGFILE"; then
-      echo "Error: Failed to set Samba password for user $USERNAME" | tee -a "$LOGFILE"
-      exit 1
-    fi
+    echo "[$(date)] Added Samba user $USERNAME" >> "$LOGFILE"
   fi
-  echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
+  rm /tmp/smbpasswd_error
 
   # Configure Samba shares for ZFS datasets
   local smb_conf="/etc/samba/smb.conf"
@@ -226,9 +250,11 @@ EOF
   done
 
   # Ensure Samba service is running
-  if ! systemctl_is_active --quiet smbd; then
-    retry_command "systemctl enable --now smbd"
+  if ! systemctl is-active --quiet smbd; then
+    retry_command "systemctl enable --now smbd" || { echo "Error: Failed to enable/start smbd service" | tee -a "$LOGFILE"; exit 1; }
     echo "[$(date)] Enabled and started smbd service" >> "$LOGFILE"
+  else
+    echo "[$(date)] smbd service is already running" >> "$LOGFILE"
   fi
 }
 
@@ -236,7 +262,7 @@ EOF
 configure_firewall() {
   # Try firewalld first
   if command -v firewall-cmd &>/dev/null && check_package firewalld; then
-    if ! systemctl_is_active --quiet firewalld; then
+    if ! systemctl is-active --quiet firewalld; then
       retry_command "systemctl enable --now firewalld"
       echo "[$(date)] Enabled and started firewalld" >> "$LOGFILE"
     fi
@@ -252,7 +278,7 @@ configure_firewall() {
     echo "[$(date)] Applied firewalld rules" >> "$LOGFILE"
   else
     # Fallback to iptables
-    echo "[$(date)] firewalld or firewall-cmd not available, falling back to iptables" >> "$LOGFILE"
+    echo "[$(date)] firewalld or firewall-cmd not available, falling back to iptables" | tee -a "$LOGFILE"
     if ! check_package iptables; then
       retry_command "apt update"
       retry_command "apt install -y iptables"
@@ -274,8 +300,13 @@ configure_firewall() {
         echo "Warning: iptables rule for port $port (UDP) already exists, skipping" | tee -a "$LOGFILE"
       fi
     done
+    # Ensure /etc/iptables/ directory exists
+    if ! [ -d /etc/iptables ]; then
+      mkdir -p /etc/iptables || { echo "Error: Failed to create /etc/iptables directory" | tee -a "$LOGFILE"; exit 1; }
+      echo "[$(date)] Created /etc/iptables directory" >> "$LOGFILE"
+    fi
     # Save iptables rules
-    retry_command "iptables-save > /etc/iptables/rules.v4"
+    retry_command "iptables-save > /etc/iptables/rules.v4" || { echo "Error: Failed to save iptables rules" | tee -a "$LOGFILE"; exit 1; }
     echo "[$(date)] Saved iptables rules to /etc/iptables/rules.v4" >> "$LOGFILE"
   fi
 }

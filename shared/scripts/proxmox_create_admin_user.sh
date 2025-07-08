@@ -165,9 +165,20 @@ configure_ssh_port() {
   echo "[$(date)] SSH configuration test passed" >> "$LOGFILE"
 
   # Check if port is in use
-  if netstat -tuln | grep -q ":$SSH_PORT "; then
-    echo "Warning: Port $SSH_PORT is already in use by another process" | tee -a "$LOGFILE"
-    echo "Please choose a different port or stop the conflicting service" | tee -a "$LOGFILE"
+  if command -v ss >/dev/null 2>&1; then
+    if ss -tuln | grep -q ":$SSH_PORT "; then
+      echo "Warning: Port $SSH_PORT is already in use by another process" | tee -a "$LOGFILE"
+      echo "Please choose a different port or stop the conflicting service" | tee -a "$LOGFILE"
+      exit 1
+    fi
+  elif command -v netstat >/dev/null 2>&1; then
+    if netstat -tuln | grep -q ":$SSH_PORT "; then
+      echo "Warning: Port $SSH_PORT is already in use by another process" | tee -a "$LOGFILE"
+      echo "Please choose a different port or stop the conflicting service" | tee -a "$LOGFILE"
+      exit 1
+    fi
+  else
+    echo "Error: Neither ss nor netstat is installed. Please install one to check port usage." | tee -a "$LOGFILE"
     exit 1
   fi
 
