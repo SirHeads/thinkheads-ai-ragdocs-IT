@@ -86,7 +86,7 @@ create_zfs_mirror() {
     zfs create "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to create dataset $ZFS_2TB_POOL/vms"; exit 1; }
     zfs set compression=lz4 "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to set compression on $ZFS_2TB_POOL/vms"; exit 1; }
     zfs set recordsize=128k "$ZFS_2TB_POOL/vms" || { echo "Error: Failed to set recordsize on $ZFS_2TB_POOL/vms"; exit 1; }
-    retry_command "pvesm add zfspool tank-vms -pool $ZFS_2TB_POOL/vms -content images,rootdir"
+    retry_command "pvesm add zfspool quickOS -pool $ZFS_2TB_POOL/vms -content images,rootdir"
     echo "[$(date)] Created ZFS mirror pool '$ZFS_2TB_POOL' for VMs/containers" >> "$LOGFILE"
   else
     echo "Warning: ZFS pool '$ZFS_2TB_POOL' already exists, skipping" | tee -a "$LOGFILE"
@@ -98,4 +98,213 @@ create_zfs_single() {
   if ! zpool list | grep -q "$ZFS_4TB_POOL"; then
     retry_command "zpool create -f -o ashift=12 $ZFS_4TB_POOL $NVME_4TB"
     for dataset in models projects backups isos; do
-      zfs create "$ZFS_4TB_POOL/$dataset" || { echo
+      zfs create "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to create dataset $ZFS_4TB_POOL/$dataset"; exit 1; }
+      zfs set compression=lz4 "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to set compression on $ZFS_4TB_POOL/$dataset"; exit 1; }
+      zfs set recordsize=1M "$ZFS_4TB_POOL/$dataset" || { echo "Error: Failed to set recordsize on $ZFS_4TB_POOL/$dataset"; exit 1; }
+    done
+    retry_command "pvesm add dir shared-backups -path /$ZFS_4TB_POOL/backups -content backup"
+    retry_command "pvesm add dir shared-isos -path /$ZFS_4TB_POOL/isos -content iso"
+    echo "[$(date)] Created ZFS pool '$ZFS_4TB_POOL' with datasets" >> "$LOGFILE"
+  else
+    echo "Warning: ZFS pool '$ZFS_4TB_POOL' already exists, skipping" | tee -a "$LOGFILE"
+  fi
+}
+
+# Configure ZFS ARC cache
+configure_zfs_arc_cache() {
+  local ram_total=$(free -b | awk '/Mem:/ {print $2}')
+  local ram_total_mb=$((ram_total / 1024 / 1024))
+  local arc_size_mb
+
+  # Prompt for ARC size
+  echo "Total system RAM: $ram_total_mb MB"
+  read -p "Enter ZFS ARC cache size in MB [$DEFAULT_ARC_SIZE_MB]: " arc_size_mb
+  arc_size_mb=${arc_size_mb:-$DEFAULT_ARC_SIZE_MB}
+
+  # Validate ARC size
+  if [[ ! $arc_size_mb =~ ^[0-9]+$ || $arc_size_mb -le 0 || $arc_size_mb -gt $ram_total_mb ]]; then
+    echo "Error: ARC size must be a positive number not exceeding total RAM ($ram_total_mb MB)" | tee -a "$LOGFILE"
+    exit 1
+  fi
+
+  local arc_size_bytes=$((arc_size_mb * 1024 * 1024))
+  echo "options zfs zfs_arc_max=$arc_size_bytes" > /etc/modprobe.d/zfs.conf || { echo "Error: Failed to configure ZFS ARC cache"; exit 1; }
+  retry_command "update-initramfs -u"
+  echo "[$(date)] Configured ZFS ARC cache to $arc_size_mb MB (~$((arc_size_mb / 1024))GB)" >> "$LOGFILE"
+}
+
+# Install and configure NFS server
+install_nfs_server() {
+  if ! check_package nfs-kernel-server; then
+    retry_command "apt update"
+    retry_command "apt install -y nfs-kernel-server"
+    echo "[$(date)] Installed nfs-kernel-server" >> "$LOGFILE"
+  fi
+
+  if ! grep -q "/$ZFS_4TB_POOL/.*$NFS_SUBNET" "$EXPORTS_FILE"; then
+    for dataset in models projects backups isos; do
+      echo "/$ZFS_4TB_POOL/$dataset $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash)" >> "$EXPORTS_FILE" || { echo "Error: Failed to update $EXPORTS_FILE for $dataset"; exit 1; }
+    done
+    retry_command "exportfs -ra"
+    echo "[$(date)] Added NFS exports for $ZFS_4TB_POOL datasets" >> "$LOGFILE"
+  else
+    retry_command "exportfs -ra"
+    echo "[$(date)] Refreshed NFS exports for $ZFS_4TB_POOL datasets" >> "$LOGFILE"
+  fi
+}
+
+# Install and configure Samba server with enhanced error handling
+install_samba_server() {
+  # Install samba and samba-common-bin
+  if ! check_package samba; then
+    retry_command "apt update"
+    retry_command "apt install -y samba samba-common-bin"
+    echo "[$(date)] Installed samba and samba-common-bin" >> "$LOGFILE"
+  fi
+
+  # Verify critical Samba binaries
+  for bin in pdbedit smbpasswd; do
+    if ! command -v "$bin" &>/dev/null; then
+      echo "Error: Samba binary $bin not found after installation" | tee -a "$LOGFILE"
+      retry_command "apt install -y samba-common-bin" || { echo "Error: Failed to install samba-common-bin"; exit 1; }
+    fi
+  done
+
+  if [[ -z "$USERNAME" ]]; then
+    read -p "Enter username for Samba credentials [$DEFAULT_USERNAME]: " USERNAME
+    USERNAME=${USERNAME:-$DEFAULT_USERNAME}
+  fi
+
+  # Check if user exists in system
+  if ! getent passwd "$USERNAME" &>/dev/null; then
+    echo "Error: User $USERNAME does not exist in the system" | tee -a "$LOGFILE"
+    exit 1
+  fi
+
+  # Check if Samba user already exists
+  if pdbedit -L | grep -q "^$USERNAME:"; then
+    echo "Warning: Samba user $USERNAME already exists, updating password" | tee -a "$LOGFILE"
+    if ! smbpasswd -s -a "$USERNAME"; then
+      echo "Error: Failed to update Samba password for user $USERNAME" | tee -a "$LOGFILE"
+      exit 1
+    fi
+  else
+    # Prompt for Samba password
+    echo "Setting Samba password for user $USERNAME"
+    if ! smbpasswd -s -a "$USERNAME"; then
+      echo "Error: Failed to set Samba password for user $USERNAME" | tee -a "$LOGFILE"
+      exit 1
+    fi
+    echo "[$(date)] Set Samba password for user $USERNAME" >> "$LOGFILE"
+  fi
+
+  # Configure Samba shares for ZFS datasets
+  local smb_conf="/etc/samba/smb.conf"
+  for dataset in models projects backups isos; do
+    if ! grep -q "path = /$ZFS_4TB_POOL/$dataset" "$smb_conf" 2>/dev/null; then
+      cat << EOF >> "$smb_conf"
+[$dataset]
+   path = /$ZFS_4TB_POOL/$dataset
+   writable = yes
+   browsable = yes
+   valid users = $USERNAME
+   create mask = 0644
+   directory mask = 0755
+EOF
+      echo "[$(date)] Added Samba share for $dataset" >> "$LOGFILE"
+    else
+      echo "Warning: Samba share for $dataset already configured, skipping" | tee -a "$LOGFILE"
+    fi
+  done
+
+  # Ensure Samba service is running
+  if ! systemctl_is_active --quiet smbd; then
+    retry_command "systemctl enable --now smbd"
+    echo "[$(date)] Enabled and started smbd service" >> "$LOGFILE"
+  fi
+}
+
+# Configure firewall rules
+configure_firewall() {
+  # Try firewalld first
+  if command -v firewall-cmd &>/dev/null && check_package firewalld; then
+    if ! systemctl_is_active --quiet firewalld; then
+      retry_command "systemctl enable --now firewalld"
+      echo "[$(date)] Enabled and started firewalld" >> "$LOGFILE"
+    fi
+    for service in nfs samba; do
+      if ! firewall-cmd --permanent --query-service="$service" &>/dev/null; then
+        retry_command "firewall-cmd --permanent --add-service=$service"
+        echo "[$(date)] Added firewalld rule for $service (ports: nfs=2049,111; samba=137-139,445)" >> "$LOGFILE"
+      else
+        echo "Warning: Firewalld rule for $service already exists, skipping" | tee -a "$LOGFILE"
+      fi
+    done
+    retry_command "firewall-cmd --reload"
+    echo "[$(date)] Applied firewalld rules" >> "$LOGFILE"
+  else
+    # Fallback to iptables
+    echo "[$(date)] firewalld or firewall-cmd not available, falling back to iptables" >> "$LOGFILE"
+    if ! check_package iptables; then
+      retry_command "apt update"
+      retry_command "apt install -y iptables"
+      echo "[$(date)] Installed iptables" >> "$LOGFILE"
+    fi
+    # NFS ports: 2049 (nfs), 111 (rpcbind)
+    # Samba ports: 137-139 (netbios), 445 (smb)
+    for port in 2049 111 137 138 139 445; do
+      if ! iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
+        retry_command "iptables -A INPUT -p tcp --dport $port -j ACCEPT"
+        echo "[$(date)] Added iptables rule for port $port" >> "$LOGFILE"
+      else
+        echo "Warning: iptables rule for port $port already exists, skipping" | tee -a "$LOGFILE"
+      fi
+      if ! iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null; then
+        retry_command "iptables -A INPUT -p udp --dport $port -j ACCEPT"
+        echo "[$(date)] Added iptables rule for port $port (UDP)" >> "$LOGFILE"
+      else
+        echo "Warning: iptables rule for port $port (UDP) already exists, skipping" | tee -a "$LOGFILE"
+      fi
+    done
+    # Save iptables rules
+    retry_command "iptables-save > /etc/iptables/rules.v4"
+    echo "[$(date)] Saved iptables rules to /etc/iptables/rules.v4" >> "$LOGFILE"
+  fi
+}
+
+# Update and upgrade system
+update_system() {
+  retry_command "apt-get update"
+  retry_command "apt-get upgrade -y"
+  retry_command "proxmox-boot-tool refresh"
+  retry_command "update-initramfs -u"
+  echo "[$(date)] System updated, upgraded, and initramfs refreshed" >> "$LOGFILE"
+}
+
+# Main execution
+check_root
+select_nvme_drives
+create_zfs_mirror
+create_zfs_single
+configure_zfs_arc_cache
+install_nfs_server
+install_samba_server
+configure_firewall
+update_system
+
+echo "Setup complete for ZFS, NFS, and Samba."
+echo "- NFS access: mount -t nfs 10.0.0.13:/$ZFS_4TB_POOL/<dataset> /mnt/<dataset>"
+echo "- Samba access: \\\\10.0.0.13\\<dataset> (use '$USERNAME' and Samba password)"
+echo "- Proxmox VE web interface: https://10.0.0.13:8006"
+if [[ $NO_REBOOT -eq 0 ]]; then
+  read -t 60 -p "Reboot now? (y/n) [Timeout in 60s]: " REBOOT_CONFIRMATION
+  if [[ -z "$REBOOT_CONFIRMATION" || "$REBOOT_CONFIRMATION" == "y" || "$REBOOT_CONFIRMATION" == "Y" ]]; then
+    echo "Rebooting system..."
+    reboot
+  else
+    echo "Please reboot manually to apply changes."
+  fi
+else
+  echo "Reboot skipped due to --no-reboot flag. Please reboot manually."
+fi
+echo "[$(date)] Completed proxmox_setup_zfs_nfs_samba.sh" >> "$LOGFILE"

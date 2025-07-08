@@ -1,12 +1,10 @@
-v
-
 This repository contains scripts to configure a Proxmox VE server (hostname: `phoenix.example.com`) for virtualization, storage, and GPU passthrough. The scripts are designed for a high-performance home-lab server with AMD CPU, NVIDIA 5060 TI GPUs, and NVMe storage, supporting AI/ML workloads, containers, and VMs.
 
 ## Purpose
 
 The scripts automate the setup of a Proxmox VE environment, including repository configuration, admin user creation, ZFS storage pools, NFS/Samba sharing, NVIDIA GPU virtualization, and LXC/VM user setup. They are modular, robust, and include error handling, logging, system updates, and command-line argument support for automation.
 
-## Prerequisites
+## Prerequisites=
 
 Before running the scripts, ensure the following requirements are met:
 
@@ -37,36 +35,35 @@ Follow these steps in order to prepare the server before running the setup scrip
    - Access the server via SSH (`ssh root@10.0.0.13`) or console.
 
 2. **Download and Extract Scripts**:
-   - Download the script tarball using `wget` and extract it.
+   - Download the script tarball using `wget` and extract it.  Check and change repo version as needed.
      ```bash
-     wget https://example.com/proxmox-scripts.tar.gz -O /tmp/proxmox-scripts.tar.gz
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.06.tar.gz -O /tmp/proxmox-scripts.tar.gz
      tar -xzf /tmp/proxmox-scripts.tar.gz -C /tmp
      ```
 
 3. **Copy Scripts to `/usr/local/bin`**:
-   - Create the target directory and copy the scripts.
+   - Create the target directory and copy the scripts. Check version number in file path.
      ```bash
-     sudo mkdir -p /usr/local/bin
-     sudo cp /tmp/proxmox-scripts/common.sh /tmp/proxmox-scripts/proxmox_configure_repos.sh /tmp/proxmox-scripts/proxmox_create_admin_user.sh /tmp/proxmox-scripts/proxmox_setup_zfs_nfs_samba.sh /tmp/proxmox-scripts/proxmox_setup_nvidia_gpu_virt.sh /tmp/proxmox-scripts/proxmox_create_lxc_user.sh /usr/local/bin/
+     mkdir -p /usr/local/bin
+     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/common.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/proxmox_configure_repos.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/proxmox_create_admin_user.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/proxmox_setup_zfs_nfs_samba.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/proxmox_setup_nvidia_gpu_virt.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.06/shared/scripts/proxmox_create_lxc_user.sh /usr/local/bin/
      ```
 
 4. **Set Script Permissions**:
    - Make the scripts executable.
      ```bash
-     sudo chmod +x /usr/local/bin/*.sh
+     chmod +x /usr/local/bin/*.sh
      ```
 
 5. **Configure Log Rotation**:
    - The scripts log to `/var/log/proxmox_setup.log`. Set up log rotation to manage log size.
    - Create the log rotation configuration file:
      ```bash
-     sudo nano /etc/logrotate.d/proxmox_setup
+     nano /etc/logrotate.d/proxmox_setup
      ```
    - Add the following content:
      ```bash
      /var/log/proxmox_setup.log {
-         weekly
-         rotate 4
+         weekly         rotate 4
          compress
          missingok
      }
@@ -74,18 +71,15 @@ Follow these steps in order to prepare the server before running the setup scrip
    - Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
    - Test the log rotation configuration:
      ```bash
-     sudo logrotate -f /etc/logrotate.d/proxmox_setup
+     logrotate -f /etc/logrotate.d/proxmox_setup
      ```
 
 6. **Verify Log File Access**:
-   - Ensure the log file directory and file are accessible.
+   - Ensure the log file directory and file are accessible, and varify the log file is writable:
      ```bash
-     sudo mkdir -p /var/log
-     sudo touch /var/log/proxmox_setup.log
-     sudo chmod 664 /var/log/proxmox_setup.log
-     ```
-   - Verify the log file is writable:
-     ```bash
+     mkdir -p /var/log
+     touch /var/log/proxmox_setup.log
+     chmod 664 /var/log/proxmox_setup.log
      echo "Test log entry" >> /var/log/proxmox_setup.log
      cat /var/log/proxmox_setup.log
      ```
@@ -112,22 +106,22 @@ After completing the pre-configuration steps, run the scripts in the following o
 1. **Configure Repositories**:
    - Run `proxmox_configure_repos.sh` to set up the Proxmox VE no-subscription repository and update the system.
      ```bash
-     sudo /usr/local/bin/proxmox_configure_repos.sh [--no-reboot]
+     /usr/local/bin/proxmox_configure_repos.sh
      ```
    - Reboot unless `--no-reboot` is used:
      ```bash
-     sudo reboot
+     reboot
      ```
 
 2. **Create Admin User**:
    - Run `proxmox_create_admin_user.sh` to create a non-root admin user with sudo and Proxmox privileges.
      ```bash
-     sudo /usr/local/bin/proxmox_create_admin_user.sh --username <admin-user> --ssh-port <ssh-port> [--no-reboot]
+     /usr/local/bin/proxmox_create_admin_user.sh --username <admin-user> --ssh-port <ssh-port> [--no-reboot]
      ```
      Replace `<admin-user>` with your chosen username (e.g., `adminuser`) and `<ssh-port>` with your preferred SSH port (e.g., `2222`).
    - Reboot unless `--no-reboot` is used:
      ```bash
-     sudo reboot
+     reboot
      ```
    - After successful execution, log out and log in as the new user:
      ```bash
@@ -143,27 +137,27 @@ After completing the pre-configuration steps, run the scripts in the following o
 4. **Configure ZFS, NFS, and Samba**:
    - As the `<admin-user>` user, run `proxmox_setup_zfs_nfs_samba.sh` to set up ZFS pools (`quickOS` for 2x 2TB NVMe mirror, `fastData` for 4TB NVMe) and shared storage.
      ```bash
-     sudo /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh --username <admin-user> [--no-reboot]
+     /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh --username <admin-user> [--no-reboot]
      ```
    - Reboot unless `--no-reboot` is used:
      ```bash
-     sudo reboot
+     reboot
      ```
 
 5. **Configure NVIDIA GPU Virtualization**:
    - Run `proxmox_setup_nvidia_gpu_virt.sh` to configure GPU passthrough (NVIDIA driver 575.57.08, CUDA 12.9).
      ```bash
-     sudo /usr/local/bin/proxmox_setup_nvidia_gpu_virt.sh --no-reboot
+     /usr/local/bin/proxmox_setup_nvidia_gpu_virt.sh --no-reboot
      ```
    - Reboot unless `--no-reboot` is used:
      ```bash
-     sudo reboot
+     reboot
      ```
 
 6. **Create LXC/VM User**:
    - Run `proxmox_create_lxc_user.sh` for each LXC container or VM user.
      ```bash
-     sudo /usr/local/bin/proxmox_create_lxc_user.sh --username <lxc-user>
+     /usr/local/bin/proxmox_create_lxc_user.sh --username <lxc-user>
      ```
      Replace `<lxc-user>` with the desired username (e.g., `lxcuser`).
 
