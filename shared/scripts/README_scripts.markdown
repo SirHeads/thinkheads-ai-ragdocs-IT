@@ -1,55 +1,56 @@
-This repository contains scripts to configure a Proxmox VE server (hostname: `phoenix.example.com`) for virtualization, storage, and GPU passthrough. The scripts are designed for a high-performance home-lab server with AMD CPU, NVIDIA 5060 TI GPUs, and NVMe storage, supporting AI/ML workloads, containers, and VMs.
+# Proxmox VE Setup Scripts
 
-## Purpose
+This repository contains a set of bash scripts designed to automate the setup and configuration of a Proxmox VE server. The scripts handle tasks such as configuring repositories, installing the NVIDIA driver, creating an admin user, and setting up ZFS pools with NFS and Samba sharing. These scripts streamline the initial setup process and ensure a consistent configuration.
 
-The scripts automate the setup of a Proxmox VE environment, including repository configuration, admin user creation, ZFS storage pools, NFS/Samba sharing, NVIDIA GPU virtualization, and LXC/VM user setup. They are modular, robust, and include error handling, logging, system updates, and command-line argument support for automation.
+## Introduction
+
+The scripts in this repository automate the following tasks:
+- **Repository Configuration**: Disables the production and Ceph repositories, enables the no-subscription repository, and updates the system.
+- **NVIDIA Driver Installation**: Installs and verifies the NVIDIA driver for systems with NVIDIA GPUs.
+- **Admin User Creation**: Creates a non-root admin user with sudo and Proxmox admin privileges, sets up SSH key-based authentication, and configures the SSH port.
+- **ZFS, NFS, and Samba Setup**: Configures ZFS pools for NVMe drives, sets up NFS and Samba servers for sharing datasets, and configures the firewall to allow necessary traffic.
+
+These scripts are designed to be run in a specific order and are idempotent, meaning they can be run multiple times without causing issues, as they check for existing configurations and skip steps that have already been completed.
 
 ## Prerequisites
 
-Before running the scripts, ensure the following requirements are met:
+Before running the scripts, ensure that you have the following:
+- A fresh installation of Proxmox VE.
+- At least three NVMe drives for ZFS pools.
+- An NVIDIA GPU (for driver installation).
+- Internet access for downloading packages.
+- Basic knowledge of the Linux command line.
+- Git installed (`apt install git`).
 
-- **Operating System**: Proxmox VE 8.x (based on Debian 12 Bookworm) installed on 2x 240GB Crucial BX500 SSDs (ZFS mirror, 180GB allocated per SSD).
-- **Hardware**:
-  - AMD CPU (e.g., AMD 7600).
-  - 2x NVIDIA 5060 TI GPUs (PCIe 5.0 x8).
-  - 2x 2TB Samsung 990 EVO Plus NVMe (for ZFS mirror, `quickOS`).
-  - 1x 4TB Samsung 990 EVO Plus NVMe (for shared storage, `fastData`).
-  - 96GB DDR5 RAM.
-  - 10GbE Ethernet interface.
-- **Network**:
-  - Static IP: `10.0.0.13`.
-  - Gateway: `10.0.0.1`.
-  - DNS: `8.8.8.8`.
-  - Subnet: `10.0.0.0/24`.
-- **Software**:
-  - Internet access for package downloads (e.g., NVIDIA drivers, CUDA).
-  - `wget` installed (included by default in Proxmox VE).
-- **Permissions**: Initial login as `root` user via SSH or console.
-- **Storage**: NVMe drives must be visible via `lsblk` (2x 2TB for mirror, 1x 4TB for standalone).
+## Setup Steps
 
-## Pre-Configuration Steps
-
-Follow these steps in order to prepare the server before running the setup scripts. All commands are executed as the `root` user unless otherwise specified.
-
-1. **Log in as root**:
-   - Access the server via SSH (`ssh root@10.0.0.13`) or console.
-
-2. **Download and Extract Scripts**:
-   - Download the script tarball using `wget` and extract it.  Check and change repo version as needed.
+1. **Clone the Git Repository**:
+   - Clone this repository to a temporary directory (e.g., `/tmp/thinkheads-ai-ragdocs-IT-0.1.09`):
      ```bash
-     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.09.tar.gz -O /tmp/proxmox-scripts.tar.gz
-     tar -xzf /tmp/proxmox-scripts.tar.gz -C /tmp
+     git clone https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/releases/tag/v0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.09
+     ```
+   - Ensure the cloned directory is `/tmp/thinkheads-ai-ragdocs-IT-0.1.10` to match the expected script paths.
+
+2. **Navigate to the Scripts Directory**:
+   - Change to the directory containing the scripts:
+     ```bash
+     cd /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts
      ```
 
 3. **Copy Scripts to `/usr/local/bin`**:
-   - Create the target directory and copy the scripts. Check version number in file path.
+   - Create the target directory and copy the scripts. Check version number in file path (0.1.10):
      ```bash
      mkdir -p /usr/local/bin
-     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/common.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_configure_repos.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_create_admin_user.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_setup_zfs_nfs_samba.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_setup_nvidia_gpu_virt.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_create_lxc_user.sh /usr/local/bin/
+     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/common.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_configure_repos.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_create_admin_user.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_setup_zfs_nfs_samba.sh \
+        /usr/local/bin/
      ```
+   - **Note**: Verify the version number (`0.1.10`) matches your cloned repository path. Adjust if necessary (e.g., `0.1.11`).
 
 4. **Set Script Permissions**:
-   - Make the scripts executable.
+   - Make the scripts executable:
      ```bash
      chmod +x /usr/local/bin/*.sh
      ```
@@ -77,7 +78,7 @@ Follow these steps in order to prepare the server before running the setup scrip
      ```
 
 6. **Verify Log File Access**:
-   - Ensure the log file directory and file are accessible, and varify the log file is writable:
+   - Ensure the log file directory and file are accessible, and verify the log file is writable:
      ```bash
      mkdir -p /var/log
      touch /var/log/proxmox_setup.log
@@ -87,195 +88,85 @@ Follow these steps in order to prepare the server before running the setup scrip
      ```
    - If the test entry is visible, the log file is correctly configured.
 
-7. **Verify NVMe Drives**:
-   - Confirm the presence of 2x 2TB NVMe drives and 1x 4TB NVMe drive using `lsblk`.
+7. **Run the Scripts in Order**:
+   - Configure repositories:
      ```bash
-     lsblk -d -o NAME,SIZE
+     sudo /usr/local/bin/proxmox_configure_repos.sh [--no-reboot]
      ```
-   - Expected output should show three NVMe drives (e.g., `nvme0n1`, `nvme1n1` ~2TB each, `nvme2n1` ~4TB).
-
-8. **Ensure Internet Connectivity**:
-   - Verify internet access for package downloads.
+   - Install NVIDIA driver:
      ```bash
-     ping -c 4 8.8.8.8
+     sudo /usr/local/bin/proxmox_install_nvidia_driver.sh [--no-reboot]
      ```
-   - Ensure the DNS server (`8.8.8.8`) and gateway (`10.0.0.1`) are reachable.
-
-## Running the Scripts
-
-After completing the pre-configuration steps, run the scripts in the following order. Start as the `root` user, then switch to the admin user after creating it.
-
-1. **Configure Repositories**:
-   - Run `proxmox_configure_repos.sh` to set up the Proxmox VE no-subscription repository and update the system.
+   - Create admin user:
      ```bash
-     /usr/local/bin/proxmox_configure_repos.sh
+     sudo /usr/local/bin/proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>] [--no-reboot]
      ```
-   - Reboot unless `--no-reboot` is used:
+   - Setup ZFS, NFS, and Samba:
      ```bash
-     reboot
+     sudo /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh [--username <username>] [--no-reboot]
      ```
 
-2. **Create Admin User**:
-   - Run `proxmox_create_admin_user.sh` to create a non-root admin user with sudo and Proxmox privileges.
+8. **Reboot the System**:
+   - After running all scripts, reboot the system to apply changes:
      ```bash
-     /usr/local/bin/proxmox_create_admin_user.sh --username <admin-user> --ssh-port <ssh-port> [--no-reboot]
+     sudo reboot
      ```
-     Replace `<admin-user>` with your chosen username (e.g., `adminuser`) and `<ssh-port>` with your preferred SSH port (e.g., `2222`).
-   - Reboot unless `--no-reboot` is used:
-     ```bash
-     reboot
-     ```
-   - After successful execution, log out and log in as the new user:
-     ```bash
-     ssh <admin-user>@10.0.0.13 -p <ssh-port>
-     ```
-
-3. **Switch to Admin User**:
-   - Log in as the new admin user via SSH.
-     ```bash
-     ssh <admin-user>@10.0.0.13 -p <ssh-port>
-     ```
-
-4. **Configure ZFS, NFS, and Samba**:
-   - As the `<admin-user>` user, run `proxmox_setup_zfs_nfs_samba.sh` to set up ZFS pools (`quickOS` for 2x 2TB NVMe mirror, `fastData` for 4TB NVMe) and shared storage.
-     ```bash
-     /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh --username <admin-user> [--no-reboot]
-     ```
-   - Reboot unless `--no-reboot` is used:
-     ```bash
-     reboot
-     ```
-
-5. **Configure NVIDIA GPU Virtualization**:
-   - Run `proxmox_setup_nvidia_gpu_virt.sh` to configure GPU passthrough (NVIDIA driver 575.57.08, CUDA 12.9).
-     ```bash
-     /usr/local/bin/proxmox_setup_nvidia_gpu_virt.sh --no-reboot
-     ```
-   - Reboot unless `--no-reboot` is used:
-     ```bash
-     reboot
-     ```
-
-6. **Create LXC/VM User**:
-   - Run `proxmox_create_lxc_user.sh` for each LXC container or VM user.
-     ```bash
-     /usr/local/bin/proxmox_create_lxc_user.sh --username <lxc-user>
-     ```
-     Replace `<lxc-user>` with the desired username (e.g., `lxcuser`).
-
-## Post-Setup Verification
-
-- **Check ZFS Pools**:
-  ```bash
-  zpool status quickOS
-  zpool status fastData
-  ```
-
-- **Test NFS Mounts**:
-  ```bash
-  mount -t nfs 10.0.0.13:/fastData/models /mnt/models
-  ```
-
-- **Test Samba Access**:
-  ```bash
-  smbclient -L //10.0.0.13 -U <admin-user>
-  ```
-
-- **Verify GPU**:
-  ```bash
-  nvidia-smi
-  ```
-
-- **Access Proxmox Web Interface**:
-  - Open `https://10.0.0.13:8006` in a browser and log in with the admin user credentials.
-
-- **Check Logs**:
-  ```bash
-  tail -f /var/log/proxmox_setup.log
-  ```
+   - If you used the `--no-reboot` flag, reboot manually.
 
 ## Script Details
 
-1. **`common.sh`** (Version: 1.1.0):
-   - Contains shared functions for error handling, logging to `/var/log/proxmox_setup.log`, and package checks.
-   - Sourced by all other scripts for consistency.
-   - Logs all actions with timestamps for debugging.
+- **`proxmox_configure_repos.sh`**:
+  - Disables the production and Ceph repositories.
+  - Enables the no-subscription repository.
+  - Updates and upgrades the system.
+  - **Options**:
+    - `--no-reboot`: Skip automatic reboot.
 
-2. **`proxmox_configure_repos.sh`** (Version: 1.1.0):
-   - Disables Proxmox VE production and Ceph repositories.
-   - Enables the no-subscription repository in `/etc/apt/sources.list`.
-   - Updates and upgrades the system (`apt-get update`, `apt-get upgrade -y`, `proxmox-boot-tool refresh`, `update-initramfs -u`).
-   - Supports `--no-reboot` to skip reboot prompt.
-   - Requires internet access.
+- **`proxmox_install_nvidia_driver.sh`**:
+  - Blacklists the Nouveau driver.
+  - Installs kernel headers and the NVIDIA driver.
+  - Verifies the driver installation.
+  - **Options**:
+    - `--no-reboot`: Skip automatic reboot.
 
-3. **`proxmox_create_admin_user.sh`** (Version: 1.4.0):
-   - Creates a non-root Linux user with sudo and Proxmox admin privileges.
-   - Installs `sudo` package.
-   - Configures SSH with a customizable port (default 22).
-   - Updates and upgrades the system (`apt-get update`, `apt-get upgrade -y`, `proxmox-boot-tool refresh`, `update-initramfs -u`).
-   - Supports `--username`, `--password`, `--ssh-key`, `--ssh-port`, and `--no-reboot` arguments.
-   - Interactive mode prompts for missing inputs.
+- **`proxmox_create_admin_user.sh`**:
+  - Creates a non-root admin user with sudo and Proxmox admin privileges.
+  - Sets up SSH key-based authentication and configures the SSH port (default: 2222).
+  - **Options**:
+    - `--username <username>`: Specify the admin username (default: `heads`).
+    - `--password <password>`: Specify the admin password (must be 8+ characters with 1 special character).
+    - `--ssh-key <key>`: Specify the SSH public key.
+    - `--ssh-port <port>`: Specify the SSH port (default: 2222).
+    - `--no-reboot`: Skip automatic reboot.
 
-4. **`proxmox_setup_zfs_nfs_samba.sh`** (Version: 1.5.0):
-   - Prompts the user to select two NVMe drives for the `quickOS` ZFS mirror pool (VMs/containers) and one for the `fastData` ZFS pool (datasets: `models`, `projects`, `backups`, `isos`).
-   - Configures ZFS ARC cache size (prompts for size in MB, default ~9000MB).
-   - Sets up NFS exports for `10.0.0.0/24`.
-   - Configures Samba with user checks and shares for `fastData` datasets.
-   - Opens firewall ports (NFS: 2049, 111; Samba: 137–139, 445).
-   - Updates and upgrades the system (`apt-get update`, `apt-get upgrade -y`, `proxmox-boot-tool refresh`, `update-initramfs -u`).
-   - Uses `lsblk` to list NVMe drives for selection.
-   - Supports `--username` and `--no-reboot` arguments.
+- **`proxmox_setup_zfs_nfs_samba.sh`**:
+  - Configures ZFS pools (`quickOS` mirror and `fastData` single) for NVMe drives.
+  - Sets up NFS and Samba servers for sharing ZFS datasets.
+  - Configures the firewall to allow NFS and Samba traffic.
+  - **Options**:
+    - `--username <username>`: Specify the username for Samba credentials (default: `heads`).
+    - `--no-reboot`: Skip automatic reboot.
 
-5. **`proxmox_setup_nvidia_gpu_virt.sh`** (Version: 1.1.0):
-   - Installs NVIDIA driver 575.57.08 and CUDA 12.9.
-   - Configures VFIO for GPU passthrough on AMD CPU.
-   - Verifies GPUs via `lspci`.
-   - Supports `--no-reboot` to skip reboot prompt.
-   - Requires internet access.
+- **`common.sh`**:
+  - Contains shared functions used by the other scripts (e.g., checking root privileges, retrying commands, checking package installations).
+  - This script is sourced by the other scripts and must be in `/usr/local/bin`.
 
-6. **`proxmox_create_lxc_user.sh`** (Version: 1.0.0):
-   - Creates Linux users for LXC containers/VMs with Samba and NFS access.
-   - Supports `--username` argument.
-   - Requires Samba service from `proxmox_setup_zfs_nfs_samba.sh`.
+## Troubleshooting
 
-## Execution Order
-
-1. `proxmox_configure_repos.sh`
-2. `proxmox_create_admin_user.sh`
-3. `proxmox_setup_zfs_nfs_samba.sh`
-4. `proxmox_setup_nvidia_gpu_virt.sh`
-5. Create LXC containers/VMs via Proxmox web interface (`https://10.0.0.13:8006`).
-6. `proxmox_create_lxc_user.sh` (for each container/VM user).
-
-## Post-Setup Tasks
-
-- **Configure Containers/VMs**:
-  - Mount `/fastData/models` in Ollama containers/VMs (set `OLLAMA_MODELS=/fastData/models`).
-  - Use `/fastData/projects` for datasets, `/fastData/backups` for backups, and `/fastData/isos` for ISO images.
-- **Security**:
-  - Consider `root_squash` in `/etc/exports` for NFS to restrict root access.
-  - Restrict SSH to specific IPs:
-    ```bash
-    firewall-cmd --add-rich-rule='rule family="ipv4" source address="<your-ip>" port port="<ssh-port>" protocol="tcp" accept' --permanent
-    ```
-- **Monitoring**:
-  - Check logs: `tail -f /var/log/proxmox_setup.log`
-  - Monitor ZFS: `zpool status; arc_summary`
+- **Script Fails to Run**: Ensure you are running the scripts as root (`sudo`) and that they are executable (`ls -l /usr/local/bin/ | grep .sh`).
+- **Copy Command Fails**: Verify the version number (0.1.09) in the source path matches your cloned directory. Check that all listed scripts exist (`ls /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/`).
+- **Package Installation Issues**: Confirm internet connectivity and repository configurations (`cat /etc/apt/sources.list`).
+- **ZFS Pool Creation Fails**: Ensure NVMe drives are not in use and are properly connected (`lsblk -d | grep nvme`).
+- **NFS or Samba Access Issues**: Check firewall rules (`iptables -L` or `firewall-cmd --list-all`) and service status (`systemctl status nfs-kernel-server smbd`).
+- **SSH Issues**: Verify the SSH port and key configuration (`cat /etc/ssh/sshd_config`); check logs in `/var/log/proxmox_setup.log`.
+- **Log Rotation Issues**: Ensure `logrotate` is installed (`apt install logrotate`) and check syntax (`logrotate -d /etc/logrotate.d/proxmox_setup`).
 
 ## Notes
 
-- **Logging**: All scripts log to `/var/log/proxmox_setup.log`. Review for errors or warnings.
-- **Reboot**: Required after each script unless `--no-reboot` is used.
-- **Dependencies**: Internet access required for `apt` and NVIDIA downloads.
-- **Hardware**: Assumes 2x 2TB NVMe, 1x 4TB NVMe, and NVIDIA 5060 TI GPUs. NVMe selection is interactive via `lsblk`.
-- **Automation**: Use command-line arguments for scripted deployments (e.g., CI/CD pipelines).
+- All scripts log actions to `/var/log/proxmox_setup.log`. Check this file for detailed setup information.
+- The scripts are idempotent and can be run multiple times safely.
+- Ensure the version number in the script paths (0.1.09) matches your setup to avoid errors.
 
-## Additional Resources
+## Conclusion
 
-- For hardware specifications, see [notes_server_hardware.markdown](notes_server_hardware.markdown).
-- For Proxmox VE installation settings, see [notes_proxmox_install_settings.markdown](notes_proxmox_install_settings.markdown).
-- For storage configuration details, see [notes_proxmox_storage_config.markdown](notes_proxmox_storage_config.markdown).
-
-## Contact
-
-For issues or enhancements, contact the project maintainer at `<maintainer-email>` (e.g., `admin@example.com`).
+By following these steps, you should have a fully configured Proxmox VE server with ZFS storage, NFS and Samba sharing, and an admin user set up. For further customization or issues, refer to the [Proxmox VE documentation](https://pve.proxmox.com/pve-docs/) or seek help from the community.
