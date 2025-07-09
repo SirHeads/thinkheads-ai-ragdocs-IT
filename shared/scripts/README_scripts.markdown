@@ -37,7 +37,7 @@ Follow these steps in order to prepare the server before running the setup scrip
 2. **Download and Extract Scripts**:
    - Download the script tarball using `wget` and extract it.  Check and change repo version as needed.
      ```bash
-     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.07.tar.gz -O /tmp/proxmox-scripts.tar.gz
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.09.tar.gz -O /tmp/proxmox-scripts.tar.gz
      tar -xzf /tmp/proxmox-scripts.tar.gz -C /tmp
      ```
 
@@ -45,7 +45,7 @@ Follow these steps in order to prepare the server before running the setup scrip
    - Create the target directory and copy the scripts. Check version number in file path.
      ```bash
      mkdir -p /usr/local/bin
-     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/common.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/proxmox_configure_repos.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/proxmox_create_admin_user.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/proxmox_setup_zfs_nfs_samba.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/proxmox_setup_nvidia_gpu_virt.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.07/shared/scripts/proxmox_create_lxc_user.sh /usr/local/bin/
+     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/common.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_configure_repos.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_create_admin_user.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_setup_zfs_nfs_samba.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_setup_nvidia_gpu_virt.sh /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/proxmox_create_lxc_user.sh /usr/local/bin/
      ```
 
 4. **Set Script Permissions**:
