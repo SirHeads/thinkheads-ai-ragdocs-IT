@@ -27,7 +27,7 @@ Before running the scripts, ensure that you have the following:
 1. **Clone the Git Repository**:
    - Clone this repository to a temporary directory (e.g., `/tmp/thinkheads-ai-ragdocs-IT-0.1.10`):
      ```bash
-     git clone https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/releases/tag/v0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.09
+     git clone https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/releases/tag/v0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.10
      ```
    - Ensure the cloned directory is `/tmp/thinkheads-ai-ragdocs-IT-0.1.10` to match the expected script paths.
 
