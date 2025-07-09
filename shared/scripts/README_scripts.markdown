@@ -20,16 +20,21 @@ Before running the scripts, ensure that you have the following:
 - An NVIDIA GPU (for driver installation).
 - Internet access for downloading packages.
 - Basic knowledge of the Linux command line.
-- Git installed (`apt install git`).
+- `wget` and `tar` installed (`apt install wget tar`).
 
 ## Setup Steps
 
-1. **Clone the Git Repository**:
-   - Clone this repository to a temporary directory (e.g., `/tmp/thinkheads-ai-ragdocs-IT-0.1.10`):
+1. **Download and Extract the Repository**:
+   - Download the repository tarball to `/tmp`:
      ```bash
-     git clone https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/releases/tag/v0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.10
+     wget https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz -O /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz
      ```
-   - Ensure the cloned directory is `/tmp/thinkheads-ai-ragdocs-IT-0.1.10` to match the expected script paths.
+   - Replace `https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz` with the actual URL of your repository tarball.
+   - Extract the tarball to `/tmp/thinkheads-ai-ragdocs-IT-0.1.10`:
+     ```bash
+     tar -xzf /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz -C /tmp
+     mv /tmp/proxmox-setup-scripts-0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.10
+     ```
 
 2. **Navigate to the Scripts Directory**:
    - Change to the directory containing the scripts:
@@ -47,7 +52,7 @@ Before running the scripts, ensure that you have the following:
         /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_setup_zfs_nfs_samba.sh \
         /usr/local/bin/
      ```
-   - **Note**: Verify the version number (`0.1.10`) matches your cloned repository path. Adjust if necessary (e.g., `0.1.11`).
+   - **Note**: Verify the version number (`0.1.10`) matches your extracted directory path. Adjust if necessary (e.g., `0.1.11`).
 
 4. **Set Script Permissions**:
    - Make the scripts executable:
@@ -154,7 +159,8 @@ Before running the scripts, ensure that you have the following:
 ## Troubleshooting
 
 - **Script Fails to Run**: Ensure you are running the scripts as root (`sudo`) and that they are executable (`ls -l /usr/local/bin/ | grep .sh`).
-- **Copy Command Fails**: Verify the version number (0.1.09) in the source path matches your cloned directory. Check that all listed scripts exist (`ls /tmp/thinkheads-ai-ragdocs-IT-0.1.09/shared/scripts/`).
+- **Download or Extraction Fails**: Verify the tarball URL and ensure `wget` and `tar` are installed (`apt install wget tar`). Check available disk space in `/tmp` (`df -h /tmp`).
+- **Copy Command Fails**: Verify the version number (0.1.10) in the source path matches your extracted directory. Check that all listed scripts exist (`ls /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/`).
 - **Package Installation Issues**: Confirm internet connectivity and repository configurations (`cat /etc/apt/sources.list`).
 - **ZFS Pool Creation Fails**: Ensure NVMe drives are not in use and are properly connected (`lsblk -d | grep nvme`).
 - **NFS or Samba Access Issues**: Check firewall rules (`iptables -L` or `firewall-cmd --list-all`) and service status (`systemctl status nfs-kernel-server smbd`).
@@ -165,7 +171,7 @@ Before running the scripts, ensure that you have the following:
 
 - All scripts log actions to `/var/log/proxmox_setup.log`. Check this file for detailed setup information.
 - The scripts are idempotent and can be run multiple times safely.
-- Ensure the version number in the script paths (0.1.09) matches your setup to avoid errors.
+- Ensure the version number in the script paths (0.1.10) matches your setup to avoid errors.
 
 ## Conclusion
 
