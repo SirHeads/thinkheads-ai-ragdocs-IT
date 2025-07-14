@@ -1,16 +1,22 @@
 #!/bin/bash
 
-# setup_zfs_proxmox.sh
-# Configures ZFS pools (quickOS, fastData), datasets, and Proxmox storage for VMs, LXC, databases, and shared data.
-# Prompts for NVMe drives, SMB user/password, and network subnet. Sets ARC to 24GB, handles NFS/Samba dependencies, and configures firewall.
+# phoenix_setup_zfs_datasets.sh
+# Configures ZFS datasets, snapshots, NFS/Samba shares, firewall, and Proxmox storage.
+# Version: 1.0.4
+# Author: Heads, Grok, Devstral
+# Usage: ./phoenix_setup_zfs_datasets.sh
+# Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
+# Run after phoenix_setup_zfs_pools.sh
 
 # Exit on any error
 set -e
 
+# Source common functions
+source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; exit 1; }
+
 # Constants
-LOGFILE="/var/log/setup_zfs_proxmox.log"
-ARC_MAX=$((24 * 1024 * 1024 * 1024)) # 24GB ARC cache for 96GB RAM system
 DEFAULT_SUBNET="10.0.0.0/24" # Default network subnet
+PROXMOX_NFS_SERVER="10.0.0.13" # Host IP for NFS server
 
 # Ensure script runs as root
 check_root() {
@@ -24,61 +30,15 @@ check_root() {
 setup_logging() {
     exec 1> >(tee -a "$LOGFILE")
     exec 2>&1
-    echo "Starting ZFS and Proxmox setup at $(date)" | tee -a "$LOGFILE"
+    echo "Starting ZFS dataset and service setup at $(date)" | tee -a "$LOGFILE"
 }
 
-# Check ZFS version for autotrim support
-check_zfs_version() {
-    echo "Checking ZFS version..." | tee -a "$LOGFILE"
-    ZFS_VERSION=$(zfs version | head -n1 | cut -d'-' -f2)
-    if [[ "$ZFS_VERSION" < "2.0" ]]; then
-        echo "Warning: ZFS version $ZFS_VERSION does not support autotrim. Will rely on periodic fstrim." | tee -a "$LOGFILE"
-        AUTOTRIM_SUPPORTED=false
-    else
-        echo "ZFS version $ZFS_VERSION supports autotrim." | tee -a "$LOGFILE"
-        AUTOTRIM_SUPPORTED=true
-    fi
-}
-
-# Prompt for NVMe drives
-prompt_for_drives() {
-    echo "Available NVMe drives:" | tee -a "$LOGFILE"
-    lsblk -d -o NAME,SIZE,MODEL | grep nvme
-    echo "Select two NVMe drives for quickOS (mirrored, 2TB each, e.g., /dev/nvme0n1 /dev/nvme2n1):"
-    read -r -p "Enter two drive paths (space-separated): " quickos_drive1 quickos_drive2
-    if [[ ! -b "$quickos_drive1" || ! -b "$quickos_drive2" ]]; then
-        echo "Error: Invalid or non-existent drives: $quickos_drive1, $quickos_drive2" | tee -a "$LOGFILE"
-        exit 1
-    fi
-    QUICKOS_2TB_DRIVES=("$quickos_drive1" "$quickos_drive2")
-
-    echo "Select one NVMe drive for fastData (4TB, e.g., /dev/nvme1n1):"
-    read -r -p "Enter drive path: " fastdata_drive
-    if [[ ! -b "$fastdata_drive" ]]; then
-        echo "Error: Invalid or non-existent drive: $fastdata_drive" | tee -a "$LOGFILE"
-        exit 1
-    fi
-    FASTDATA_4TB_DRIVE="$fastdata_drive"
-}
-
-# Check if drives are in use
-check_drives_free() {
-    echo "Checking if drives are free..." | tee -a "$LOGFILE"
-    for drive in "${QUICKOS_2TB_DRIVES[@]}" "$FASTDATA_4TB_DRIVE"; do
-        if zpool status | grep -q "$drive"; then
-            echo "Error: Drive $drive is part of an existing ZFS pool. Destroy the pool first." | tee -a "$LOGFILE"
-            exit 1
-        fi
-        if mount | grep -q "$drive"; then
-            echo "Error: Drive $drive is mounted. Unmount it first." | tee -a "$LOGFILE"
-            exit 1
-        fi
-        if pvdisplay | grep -q "$drive"; then
-            echo "Error: Drive $drive is part of an LVM physical volume. Remove it first." | tee -a "$LOGFILE"
-            exit 1
-        fi
-        if lsof "$drive" > /dev/null 2>&1; then
-            echo "Error: Drive $drive is in use by a process. Stop processes first." | tee -a "$LOGFILE"
+# Check if pools exist
+check_pools() {
+    echo "Checking for required ZFS pools..." | tee -a "$LOGFILE"
+    for pool in quickOS fastData; do
+        if ! zpool status "$pool" >/dev/null 2>&1; then
+            echo "Error: ZFS pool $pool does not exist. Run phoenix_setup_zfs_pools.sh first." | tee -a "$LOGFILE"
             exit 1
         fi
     done
@@ -127,6 +87,7 @@ configure_firewall() {
     ufw allow from "$NFS_SUBNET" to any port 22 proto tcp # SSH
     ufw allow from "$NFS_SUBNET" to any port 111 proto tcp # RPC
     ufw allow from "$NFS_SUBNET" to any port 2049 proto tcp # NFS
+    ufw allow from 127.0.0.1 to any port 2049 proto tcp # NFS localhost
     ufw allow from "$NFS_SUBNET" to any port 137 proto udp # Samba NetBIOS
     ufw allow from "$NFS_SUBNET" to any port 138 proto udp # Samba NetBIOS
     ufw allow from "$NFS_SUBNET" to any port 139 proto tcp # Samba SMB
@@ -139,11 +100,24 @@ configure_firewall() {
 # Check network connectivity
 check_network() {
     echo "Checking network connectivity..." | tee -a "$LOGFILE"
-    if ! ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-        echo "Warning: No internet connectivity detected. Package installation may fail." | tee -a "$LOGFILE"
+    # Check localhost resolution
+    if ! ping -c 1 localhost >/dev/null 2>&1; then
+        echo "Warning: Hostname 'localhost' does not resolve to 127.0.0.1. Check /etc/hosts." | tee -a "$LOGFILE"
     fi
+    # Check if PROXMOX_NFS_SERVER is reachable
+    if ! ping -c 1 "$PROXMOX_NFS_SERVER" >/dev/null 2>&1; then
+        echo "Error: NFS server IP $PROXMOX_NFS_SERVER is not reachable." | tee -a "$LOGFILE"
+        exit 1
+    fi
+    # Check if an interface has an IP in NFS_SUBNET
     if ! ip addr show | grep -q "inet.*$NFS_SUBNET"; then
-        echo "Warning: Network subnet $NFS_SUBNET not detected. NFS/Samba may not work as expected." | tee -a "$LOGFILE"
+        echo "Warning: Network subnet $NFS_SUBNET not detected on any interface. NFS/Samba may not work as expected." | tee -a "$LOGFILE"
+    else
+        echo "Network subnet $NFS_SUBNET detected on interface." | tee -a "$LOGFILE"
+    fi
+    # Check internet connectivity
+    if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+        echo "Warning: No internet connectivity detected. Package installation may fail." | tee -a "$LOGFILE"
     fi
 }
 
@@ -164,79 +138,6 @@ configure_samba_user() {
         echo "Failed to enable Samba user $SMB_USER" | tee -a "$LOGFILE"
         exit 1
     }
-}
-
-# Confirm drive wiping
-confirm_wipe_drives() {
-    echo "WARNING: This script will wipe the following drives:" | tee -a "$LOGFILE"
-    echo "quickOS (mirror): ${QUICKOS_2TB_DRIVES[*]}" | tee -a "$LOGFILE"
-    echo "fastData (single): $FASTDATA_4TB_DRIVE" | tee -a "$LOGFILE"
-    read -p "Proceed with wiping drives? (y/N): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "Aborted by user." | tee -a "$LOGFILE"
-        exit 1
-    fi
-}
-
-# Wipe drives
-wipe_drives() {
-    echo "Wiping drives..." | tee -a "$LOGFILE"
-    for drive in "${QUICKOS_2TB_DRIVES[@]}" "$FASTDATA_4TB_DRIVE"; do
-        if [[ -b "$drive" ]]; then
-            wipefs -a "$drive" || { echo "Failed to wipe $drive" | tee -a "$LOGFILE"; exit 1; }
-        else
-            echo "Error: Drive $drive not found." | tee -a "$LOGFILE"
-            exit 1
-        fi
-    done
-}
-
-# Create ZFS pools
-create_zfs_pools() {
-    echo "Creating ZFS pool quickOS (mirror)..." | tee -a "$LOGFILE"
-    if [[ "$AUTOTRIM_SUPPORTED" == "true" ]]; then
-        zpool create -f -o ashift=12 -o autotrim=on quickOS mirror "${QUICKOS_2TB_DRIVES[@]}" || {
-            echo "Failed to create quickOS pool" | tee -a "$LOGFILE"
-            exit 1
-        }
-    else
-        zpool create -f -o ashift=12 quickOS mirror "${QUICKOS_2TB_DRIVES[@]}" || {
-            echo "Failed to create quickOS pool" | tee -a "$LOGFILE"
-            exit 1
-        }
-        echo "Setting up periodic fstrim due to lack of autotrim support..." | tee -a "$LOGFILE"
-        echo "15 3 * * * root fstrim /quickOS" > /etc/cron.d/fstrim_quickOS
-    fi
-    zfs set compression=lz4 atime=off quickOS || {
-        echo "Failed to set properties on quickOS pool" | tee -a "$LOGFILE"
-        exit 1
-    }
-
-    echo "Creating ZFS pool fastData (single)..." | tee -a "$LOGFILE"
-    if [[ "$AUTOTRIM_SUPPORTED" == "true" ]]; then
-        zpool create -f -o ashift=12 -o autotrim=on fastData "$FASTDATA_4TB_DRIVE" || {
-            echo "Failed to create fastData pool" | tee -a "$LOGFILE"
-            exit 1
-        }
-    else
-        zpool create -f -o ashift=12 fastData "$FASTDATA_4TB_DRIVE" || {
-            echo "Failed to create fastData pool" | tee -a "$LOGFILE"
-            exit 1
-        }
-        echo "Setting up periodic fstrim for fastData..." | tee -a "$LOGFILE"
-        echo "15 3 * * * root fstrim /fastData" > /etc/cron.d/fstrim_fastData
-    fi
-    zfs set compression=lz4 atime=off fastData || {
-        echo "Failed to set properties on fastData pool" | tee -a "$LOGFILE"
-        exit 1
-    }
-}
-
-# Tune ARC cache
-tune_arc() {
-    echo "Tuning ARC cache to 24GB..." | tee -a "$LOGFILE"
-    echo "$ARC_MAX" > /sys/module/zfs/parameters/zfs_arc_max
-    echo "options zfs zfs_arc_max=$ARC_MAX" > /etc/modprobe.d/zfs.conf
 }
 
 # Create ZFS datasets on quickOS
@@ -267,6 +168,10 @@ create_fastdata_datasets() {
         echo "Failed to create shared-test-data dataset" | tee -a "$LOGFILE"
         exit 1
     }
+    zfs create -o recordsize=16K -o compression=lz4 -o sync=always -o quota=100G fastData/shared-test-data-sync || {
+        echo "Failed to create shared-test-data-sync dataset" | tee -a "$LOGFILE"
+        exit 1
+    }
     zfs create -o recordsize=1M -o compression=zstd -o sync=standard -o quota=2T fastData/shared-backups || {
         echo "Failed to create shared-backups dataset" | tee -a "$LOGFILE"
         exit 1
@@ -285,17 +190,19 @@ create_fastdata_datasets() {
 configure_snapshots() {
     echo "Configuring ZFS snapshot schedules..." | tee -a "$LOGFILE"
     echo "0 * * * * root zfs snapshot quickOS/shared-prod-data-sync@snap-hourly-\$(date +%Y%m%d%H%M)" > /etc/cron.d/zfs-snapshot-prod-data-sync
+    echo "0 * * * * root zfs snapshot fastData/shared-test-data-sync@snap-hourly-\$(date +%Y%m%d%H%M)" > /etc/cron.d/zfs-snapshot-test-data-sync
     echo "0 0 * * * root zfs snapshot quickOS/disks-vm@snap-daily-\$(date +%Y%m%d)" > /etc/cron.d/zfs-snapshot-disks-vm
     echo "0 0 * * * root zfs snapshot quickOS/disks-lxc@snap-daily-\$(date +%Y%m%d)" > /etc/cron.d/zfs-snapshot-disks-lxc
     echo "0 0 * * * root zfs snapshot quickOS/shared-prod-data@snap-daily-\$(date +%Y%m%d)" > /etc/cron.d/zfs-snapshot-prod-data
     echo "0 0 * * 0 root zfs snapshot fastData/shared-test-data@snap-weekly-\$(date +%Y%m%d)" > /etc/cron.d/zfs-snapshot-test-data
 }
 
+
 # Verify dataset mountpoints
 verify_mountpoints() {
     echo "Verifying dataset mountpoints..." | tee -a "$LOGFILE"
     for dataset in quickOS/disks-vm quickOS/disks-lxc quickOS/shared-prod-data quickOS/shared-prod-data-sync \
-                   fastData/shared-test-data fastData/shared-backups fastData/shared-iso fastData/shared-bulk-data; do
+                   fastData/shared-test-data fastData/shared-test-data-sync fastData/shared-backups fastData/shared-iso fastData/shared-bulk-data; do
         mountpoint=$(zfs get -H -o value mountpoint "$dataset")
         if [[ ! -d "$mountpoint" ]]; then
             echo "Error: Mountpoint $mountpoint for dataset $dataset does not exist" | tee -a "$LOGFILE"
@@ -308,11 +215,12 @@ verify_mountpoints() {
 configure_nfs() {
     echo "Configuring NFS exports..." | tee -a "$LOGFILE"
     cat << EOF > /etc/exports
-/quickOS/shared-prod-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash,noatime)
-/quickOS/shared-prod-data-sync $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash,noatime)
-/fastData/shared-test-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash,noatime)
-/fastData/shared-bulk-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash,noatime)
-/fastData/shared-iso $NFS_SUBNET(ro,async,no_subtree_check,no_root_squash,noatime)
+/quickOS/shared-prod-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash)
+/quickOS/shared-prod-data-sync $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash)
+/fastData/shared-test-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash)
+/fastData/shared-test-data-sync $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash)
+/fastData/shared-bulk-data $NFS_SUBNET(rw,async,no_subtree_check,no_root_squash)
+/fastData/shared-iso $NFS_SUBNET(ro,async,no_subtree_check,no_root_squash)
 EOF
     exportfs -ra || { echo "Failed to export NFS shares" | tee -a "$LOGFILE"; exit 1; }
     systemctl enable --now nfs-kernel-server || { echo "Failed to enable NFS server" | tee -a "$LOGFILE"; exit 1; }
@@ -352,6 +260,14 @@ configure_samba() {
    create mask = 0644
    directory mask = 0755
 
+[shared-test-data-sync]
+   path = /fastData/shared-test-data-sync
+   writable = yes
+   browsable = yes
+   valid users = $SMB_USER
+   create mask = 0644
+   directory mask = 0755
+
 [shared-bulk-data]
    path = /fastData/shared-bulk-data
    writable = yes
@@ -382,16 +298,20 @@ configure_proxmox_storage() {
         echo "Failed to add disks-lxc storage" | tee -a "$LOGFILE"
         exit 1
     }
-    pvesm add nfs shared-prod-data -server localhost -path /quickOS/shared-prod-data -export /quickOS/shared-prod-data -content vztmpl,backup,iso,snippets -options noatime,async || {
+    pvesm add nfs shared-prod-data -server "$PROXMOX_NFS_SERVER" -path /quickOS/shared-prod-data -export /quickOS/shared-prod-data -content vztmpl,backup,iso,snippets -options vers=4 || {
         echo "Failed to add shared-prod-data storage" | tee -a "$LOGFILE"
         exit 1
     }
-    pvesm add nfs shared-prod-data-sync -server localhost -path /quickOS/shared-prod-data-sync -export /quickOS/shared-prod-data-sync -content vztmpl,backup,iso,snippets -options noatime,sync || {
+    pvesm add nfs shared-prod-data-sync -server "$PROXMOX_NFS_SERVER" -path /quickOS/shared-prod-data-sync -export /quickOS/shared-prod-data-sync -content vztmpl,backup,iso,snippets -options vers=4 || {
         echo "Failed to add shared-prod-data-sync storage" | tee -a "$LOGFILE"
         exit 1
     }
-    pvesm add nfs shared-test-data -server localhost -path /fastData/shared-test-data -export /fastData/shared-test-data -content vztmpl,backup,iso,snippets -options noatime,async || {
+    pvesm add nfs shared-test-data -server "$PROXMOX_NFS_SERVER" -path /fastData/shared-test-data -export /fastData/shared-test-data -content vztmpl,backup,iso,snippets -options vers=4 || {
         echo "Failed to add shared-test-data storage" | tee -a "$LOGFILE"
+        exit 1
+    }
+    pvesm add nfs shared-test-data-sync -server "$PROXMOX_NFS_SERVER" -path /fastData/shared-test-data-sync -export /fastData/shared-test-data-sync -content vztmpl,backup,iso,snippets -options vers=4 || {
+        echo "Failed to add shared-test-data-sync storage" | tee -a "$LOGFILE"
         exit 1
     }
     pvesm add dir shared-backups -path /fastData/shared-backups -content backup || {
@@ -402,7 +322,7 @@ configure_proxmox_storage() {
         echo "Failed to add shared-iso storage" | tee -a "$LOGFILE"
         exit 1
     }
-    pvesm add nfs shared-bulk-data -server localhost -path /fastData/shared-bulk-data -export /fastData/shared-bulk-data -content vztmpl,backup,iso,snippets -options noatime,async || {
+    pvesm add nfs shared-bulk-data -server "$PROXMOX_NFS_SERVER" -path /fastData/shared-bulk-data -export /fastData/shared-bulk-data -content vztmpl,backup,iso,snippets -options vers=4 || {
         echo "Failed to add shared-bulk-data storage" | tee -a "$LOGFILE"
         exit 1
     }
@@ -412,27 +332,22 @@ configure_proxmox_storage() {
 main() {
     check_root
     setup_logging
-    check_zfs_version
-    prompt_for_drives
+    check_pools
     prompt_for_smb_credentials
     prompt_for_subnet
     check_network
     install_prerequisites
     configure_firewall
     configure_samba_user
-    check_drives_free
-    confirm_wipe_drives
-    wipe_drives
-    create_zfs_pools
-    tune_arc
     create_quickos_datasets
     create_fastdata_datasets
+    zfs mount -a || { echo "Failed to mount ZFS datasets" | tee -a "$LOGFILE"; exit 1; }
     configure_snapshots
     verify_mountpoints
     configure_nfs
     configure_samba
     configure_proxmox_storage
-    echo "ZFS and Proxmox setup completed successfully at $(date)" | tee -a "$LOGFILE"
+    echo "ZFS dataset and service setup completed successfully at $(date)" | tee -a "$LOGFILE"
 }
 
 main
