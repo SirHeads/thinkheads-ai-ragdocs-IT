@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# proxmox_configure_repos.sh
+# phoenix_configure_repos.sh
 # Configures Proxmox VE repositories: disables production and Ceph repos, enables no-subscription repo
 # Version: 1.1.0
 # Author: Heads, Grok, Devstral

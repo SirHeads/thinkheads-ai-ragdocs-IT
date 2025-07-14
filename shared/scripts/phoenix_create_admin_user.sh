@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# proxmox_create_admin_user.sh
+# phoenix_create_admin_user.sh
 # Creates a non-root Linux user with sudo and Proxmox admin privileges, sets up SSH key-based authentication
 # Version: 1.4.2
 # Author: Heads, Grok, Devstral

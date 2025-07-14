@@ -1,6 +1,6 @@
 # Proxmox VE Setup Scripts
 
-This repository contains a set of bash scripts designed to automate the setup and configuration of a Proxmox VE server. The scripts handle tasks such as configuring repositories, installing the NVIDIA driver, creating an admin user, and setting up ZFS pools with NFS and Samba sharing. These scripts streamline the initial setup process and ensure a consistent configuration.
+This repository contains a set of bash scripts designed to automate the setup and configuration of a Proxmox VE server named phoenix. The scripts handle tasks such as configuring repositories, installing the NVIDIA driver, creating an admin user, and setting up ZFS pools with NFS and Samba sharing. These scripts streamline the initial setup process and ensure a consistent configuration.
 
 ## Introduction
 
@@ -16,7 +16,7 @@ These scripts are designed to be run in a specific order and are idempotent, mea
 
 Before running the scripts, ensure that you have the following:
 - A fresh installation of Proxmox VE.
-- At least three NVMe drives for ZFS pools.
+- At least three NVMe drives for ZFS pools. 2 x 2tb, 1x 4tb
 - An NVIDIA GPU (for driver installation).
 - Internet access for downloading packages.
 - Basic knowledge of the Linux command line.
@@ -27,9 +27,9 @@ Before running the scripts, ensure that you have the following:
 1. **Download and Extract the Repository**:
    - Download the repository tarball to `/tmp`:
      ```bash
-     wget https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz -O /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.10.tar.gz -O /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz
      ```
-   - Replace `https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz` with the actual URL of your repository tarball.
+   - Confirm `https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz` with the actual URL of desired repository tarball.
    - Extract the tarball to `/tmp/thinkheads-ai-ragdocs-IT-0.1.10`:
      ```bash
      tar -xzf /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz -C /tmp
@@ -47,10 +47,11 @@ Before running the scripts, ensure that you have the following:
      ```bash
      mkdir -p /usr/local/bin
      cp /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/common.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_configure_repos.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_create_admin_user.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/proxmox_setup_zfs_nfs_samba.sh \
-        /usr/local/bin/
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_configure_repos.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_install_nvidia_driver.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_create_admin_user.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/
+        scripts/phoenix_setup_zfs.sh \ /usr/local/bin
      ```
    - **Note**: Verify the version number (`0.1.10`) matches your extracted directory path. Adjust if necessary (e.g., `0.1.11`).
 
@@ -96,45 +97,45 @@ Before running the scripts, ensure that you have the following:
 7. **Run the Scripts in Order**:
    - Configure repositories:
      ```bash
-     sudo /usr/local/bin/proxmox_configure_repos.sh [--no-reboot]
+     /usr/local/bin/phoenix_configure_repos.sh
      ```
    - Install NVIDIA driver:
      ```bash
-     sudo /usr/local/bin/proxmox_install_nvidia_driver.sh [--no-reboot]
+     /usr/local/bin/phoenix_install_nvidia_driver.sh
      ```
    - Create admin user:
      ```bash
-     sudo /usr/local/bin/proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>] [--no-reboot]
+     /usr/local/bin/phoenix_create_admin_user.sh 
      ```
-   - Setup ZFS, NFS, and Samba:
+   - Setup ZFS datasets:
      ```bash
-     sudo /usr/local/bin/proxmox_setup_zfs_nfs_samba.sh [--username <username>] [--no-reboot]
-     ```
+     /usr/local/bin/phoenix_setup_zfs.sh
+     ``` 
 
 8. **Reboot the System**:
    - After running all scripts, reboot the system to apply changes:
      ```bash
-     sudo reboot
+     reboot
      ```
    - If you used the `--no-reboot` flag, reboot manually.
 
 ## Script Details
 
-- **`proxmox_configure_repos.sh`**:
+- **`phoenix_configure_repos.sh`**:
   - Disables the production and Ceph repositories.
   - Enables the no-subscription repository.
   - Updates and upgrades the system.
   - **Options**:
     - `--no-reboot`: Skip automatic reboot.
 
-- **`proxmox_install_nvidia_driver.sh`**:
+- **`phoenix_install_nvidia_driver.sh`**:
   - Blacklists the Nouveau driver.
   - Installs kernel headers and the NVIDIA driver.
   - Verifies the driver installation.
   - **Options**:
     - `--no-reboot`: Skip automatic reboot.
 
-- **`proxmox_create_admin_user.sh`**:
+- **`phoenix_create_admin_user.sh`**:
   - Creates a non-root admin user with sudo and Proxmox admin privileges.
   - Sets up SSH key-based authentication and configures the SSH port (default: 2222).
   - **Options**:
@@ -144,13 +145,14 @@ Before running the scripts, ensure that you have the following:
     - `--ssh-port <port>`: Specify the SSH port (default: 2222).
     - `--no-reboot`: Skip automatic reboot.
 
-- **`proxmox_setup_zfs_nfs_samba.sh`**:
+- **`phoenix_setup_zfs_pools.sh`**:
   - Configures ZFS pools (`quickOS` mirror and `fastData` single) for NVMe drives.
-  - Sets up NFS and Samba servers for sharing ZFS datasets.
-  - Configures the firewall to allow NFS and Samba traffic.
+  - Readme needs work
+
+- **`phoenix_setup_zfs_datasets.sh`**:
+  - missing from readme
   - **Options**:
-    - `--username <username>`: Specify the username for Samba credentials (default: `heads`).
-    - `--no-reboot`: Skip automatic reboot.
+  - missing from readme
 
 - **`common.sh`**:
   - Contains shared functions used by the other scripts (e.g., checking root privileges, retrying commands, checking package installations).
