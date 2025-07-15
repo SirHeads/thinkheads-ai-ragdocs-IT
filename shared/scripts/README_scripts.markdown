@@ -27,34 +27,36 @@ Before running the scripts, ensure that you have the following:
 1. **Download and Extract the Repository**:
    - Download the repository tarball to `/tmp`:
      ```bash
-     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.1.10.tar.gz -O /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz
+     wget https://github.com/SirHeads/thinkheads-ai-ragdocs-IT/archive/refs/tags/v0.2.01.tar.gz -O /tmp/thinkheads-ai-ragdocs-IT-0.2.01.tar.gz
      ```
-   - Confirm `https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.1.10.tar.gz` with the actual URL of desired repository tarball.
-   - Extract the tarball to `/tmp/thinkheads-ai-ragdocs-IT-0.1.10`:
+   - Confirm `https://github.com/your-repo/proxmox-setup-scripts/archive/refs/tags/v0.2.01.tar.gz` with the actual URL of desired repository tarball.
+   - Extract the tarball to `/tmp/thinkheads-ai-ragdocs-IT-0.2.01`:
      ```bash
-     tar -xzf /tmp/thinkheads-ai-ragdocs-IT-0.1.10.tar.gz -C /tmp
-     mv /tmp/proxmox-setup-scripts-0.1.10 /tmp/thinkheads-ai-ragdocs-IT-0.1.10
+     tar -xzf /tmp/thinkheads-ai-ragdocs-IT-0.2.01.tar.gz -C /tmp
+     mv /tmp/proxmox-setup-scripts-0.2.01 /tmp/thinkheads-ai-ragdocs-IT-0.2.01
      ```
 
 2. **Navigate to the Scripts Directory**:
    - Change to the directory containing the scripts:
      ```bash
-     cd /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts
+     cd /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts
      ```
 
 3. **Copy Scripts to `/usr/local/bin`**:
-   - Create the target directory and copy the scripts. Check version number in file path (0.1.10):
+   - Create the target directory and copy the scripts. Check version number in file path (0.2.01):
      ```bash
      mkdir -p /usr/local/bin
-     cp /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/common.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_configure_repos.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_install_nvidia_driver.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_create_admin_user.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_setup_zfs_pools.sh \
-        /tmp/thinkheads-ai-ragdocs-IT-0.1.10/shared/scripts/phoenix_setup_zfs_datasets.sh \
+     cp /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/common.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_proxmox_initial_config.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_install_nvidia_driver.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_create_admin_user.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_setup_nfs.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_setup_samba.sh \  
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_setup_zfs_pools.sh \
+        /tmp/thinkheads-ai-ragdocs-IT-0.2.01/shared/scripts/phoenix_setup_zfs_datasets.sh \
         /usr/local/bin
      ```
-   - **Note**: Verify the version number (`0.1.10`) matches your extracted directory path. Adjust if necessary (e.g., `0.1.11`).
+   - **Note**: Verify the version number (`0.2.01`) matches your extracted directory path. Adjust if necessary (e.g., `0.2.02`).
 
 4. **Set Script Permissions**:
    - Make the scripts executable:
@@ -62,43 +64,10 @@ Before running the scripts, ensure that you have the following:
      chmod +x /usr/local/bin/*.sh
      ```
 
-5. **Configure Log Rotation**:
-   - The scripts log to `/var/log/proxmox_setup.log`. Set up log rotation to manage log size.
-   - Create the log rotation configuration file:
-     ```bash
-     nano /etc/logrotate.d/proxmox_setup
-     ```
-   - Add the following content:
-     ```bash
-     /var/log/proxmox_setup.log 
-     {
-         weekly
-         rotate 4
-         compress
-         missingok
-     }
-     ```
-   - Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
-   - Test the log rotation configuration:
-     ```bash
-     logrotate -f /etc/logrotate.d/proxmox_setup
-     ```
-
-6. **Verify Log File Access**:
-   - Ensure the log file directory and file are accessible, and verify the log file is writable:
-     ```bash
-     mkdir -p /var/log
-     touch /var/log/proxmox_setup.log
-     chmod 664 /var/log/proxmox_setup.log
-     echo "Test log entry" >> /var/log/proxmox_setup.log
-     cat /var/log/proxmox_setup.log
-     ```
-   - If the test entry is visible, the log file is correctly configured.
-
 7. **Run the Scripts in Order**:
    - Configure repositories:
      ```bash
-     /usr/local/bin/phoenix_configure_repos.sh
+     /usr/local/bin/phoenix_proxmox_install_config.sh
      ```
    - Install NVIDIA driver:
      ```bash
@@ -107,6 +76,14 @@ Before running the scripts, ensure that you have the following:
    - Create admin user:
      ```bash
      /usr/local/bin/phoenix_create_admin_user.sh
+     ```
+   - Setup NFS:
+     ```bash
+     /usr/local/bin/phoenix_setup_nfs.sh
+     ```
+   - Setup Samba:
+     ```bash
+     /usr/local/bin/phoenix_setup_samba.sh
      ```
    - Setup ZFS pools:
      ```bash
@@ -125,45 +102,6 @@ Before running the scripts, ensure that you have the following:
    - If you used the `--no-reboot` flag, reboot manually.
 
 ## Script Details
-
-- **`phoenix_configure_repos.sh`**:
-  - Disables the production and Ceph repositories.
-  - Enables the no-subscription repository.
-  - Updates and upgrades the system.
-  - **Options**:
-    - `--no-reboot`: Skip automatic reboot.
-
-- **`phoenix_install_nvidia_driver.sh`**:
-  - Blacklists the Nouveau driver.
-  - Installs kernel headers and the NVIDIA driver.
-  - Verifies the driver installation.
-  - **Options**:
-    - `--no-reboot`: Skip automatic reboot.
-
-- **`phoenix_create_admin_user.sh`**:
-  - Creates a non-root admin user with sudo and Proxmox admin privileges.
-  - Sets up SSH key-based authentication and configures the SSH port (default: 2222).
-  - **Options**:
-    - `--username <username>`: Specify the admin username (default: `heads`).
-    - `--password <password>`: Specify the admin password (must be 8+ characters with 1 special character).
-    - `--ssh-key <key>`: Specify the SSH public key.
-    - `--ssh-port <port>`: Specify the SSH port (default: 2222).
-    - `--nicknames`: Allow user to specify nicknames for SSH access
-    - `--no-reboot`: Skip automatic reboot.
-
-- **`phoenix_setup_zfs_pools.sh`**:
-  - Configures ZFS pools (`quickOS` mirror and `fastData` single) for NVMe drives using stable `/dev/disk/by-id/` paths.
-  - Wipes specified drives, creates pools, tunes ARC cache (24GB), and ensures pools are imported automatically on boot.
-  - **Options**: None.
-
-- **`phoenix_setup_zfs_datasets.sh`**:
-  - Configures ZFS datasets on `quickOS` and `fastData` pools.
-  - Sets up snapshot schedules, NFS/Samba shares, firewall rules, and Proxmox storage for VMs, LXC, and shared data.
-  - **Options**: None.
-
-- **`common.sh`**:
-  - Contains shared functions used by the other scripts (e.g., checking root privileges, retrying commands, checking package installations).
-  - This script is sourced by the other scripts and must be in `/usr/local/bin`.
 
 ## Troubleshooting
 

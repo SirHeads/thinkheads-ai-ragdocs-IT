@@ -2,7 +2,7 @@
 
 # proxmox_install_nvidia_driver.sh
 # Installs NVIDIA drivers on Proxmox VE
-# Version: 1.0.2
+# Version: 1.0.3
 # Author: Heads, Grok, Devstral
 # Usage: ./proxmox_install_nvidia_driver.sh [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -41,6 +41,7 @@ blacklist_nouveau() {
 install_pve_headers() {
   local kernel_version=$(uname -r)
   if ! check_package "pve-headers-$kernel_version"; then
+    echo "Installing pve-headers for kernel $kernel_version, this may take a while..." | tee -a "$LOGFILE"
     retry_command "apt-get install -y pve-headers-$kernel_version"
     echo "[$(date)] Installed pve-headers for kernel $kernel_version" >> "$LOGFILE"
     
@@ -83,12 +84,13 @@ add_nvidia_repo() {
   fi
 }
 
-# Install NVIDIA drivers
+# Install NVIDIA drivers and nvtop
 install_nvidia_driver() {
   retry_command "apt-get update"
   if ! check_package nvidia-driver-assistant; then
-    retry_command "apt-get install -y nvidia-driver-assistant"
-    echo "[$(date)] Installed nvidia-driver-assistant" >> "$LOGFILE"
+    echo "Installing nvidia-driver-assistant and nvtop, this may take a while..." | tee -a "$LOGFILE"
+    retry_command "apt-get install -y nvidia-driver-assistant nvtop"
+    echo "[$(date)] Installed nvidia-driver-assistant and nvtop" >> "$LOGFILE"
   fi
   retry_command "nvidia-driver-assistant"
   if ! check_package nvidia-open; then

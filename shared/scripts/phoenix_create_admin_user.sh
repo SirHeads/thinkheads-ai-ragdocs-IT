@@ -4,7 +4,7 @@
 # Creates a non-root Linux user with sudo and Proxmox admin privileges, sets up SSH key-based authentication
 # Version: 1.4.2
 # Author: Heads, Grok, Devstral
-# Usage: ./proxmox_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--ssh-port <port>] [--no-reboot]
+# Usage: ./phoenix_create_admin_user.sh [--username <username>] [--password <password>] [--ssh-key <key>] [--no-reboot]
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
 
 # Source common functions
@@ -12,7 +12,6 @@ source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; e
 
 # Default values
 DEFAULT_USERNAME="heads"
-DEFAULT_SSH_PORT=2222
 NO_REBOOT=0
 
 # Parse command-line arguments
@@ -28,10 +27,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ssh-key)
       SSH_PUBLIC_KEY="$2"
-      shift 2
-      ;;
-    --ssh-port)
-      SSH_PORT="$2"
       shift 2
       ;;
     --no-reboot)
@@ -118,75 +113,6 @@ create_user() {
   echo "[$(date)] Created and configured Proxmox admin user '$USERNAME'" >> "$LOGFILE"
 }
 
-# Configure SSH port if different from default
-configure_ssh_port() {
-  local sshd_config="/etc/ssh/sshd_config"
-  SSH_PORT=${SSH_PORT:-$DEFAULT_SSH_PORT}
-
-  # Validate SSH port
-  if [[ ! "$SSH_PORT" =~ ^[0-9]+$ || "$SSH_PORT" -lt 1 || "$SSH_PORT" -gt 65535 ]]; then
-    echo "Error: SSH port must be a number between 1 and 65535" | tee -a "$LOGFILE"
-    exit 1
-  fi
-
-  # Check if sshd_config exists
-  if [[ ! -f "$sshd_config" ]]; then
-    echo "Error: SSH configuration file $sshd_config not found" | tee -a "$LOGFILE"
-    exit 1
-  fi
-
-  # Backup sshd_config
-  cp "$sshd_config" "${sshd_config}.bak" || { echo "Error: Failed to backup $sshd_config"; exit 1; }
-  echo "[$(date)] Backed up $sshd_config to ${sshd_config}.bak" >> "$LOGFILE"
-
-  # Check for empty or invalid Port directive
-  if ! grep -q "^Port [0-9]\+" "$sshd_config" && ! grep -q "^#Port [0-9]\+" "$sshd_config"; then
-    echo "[$(date)] No valid Port directive found in $sshd_config, adding Port $SSH_PORT" >> "$LOGFILE"
-    echo "Port $SSH_PORT" >> "$sshd_config" || { echo "Error: Failed to add Port $SSH_PORT to $sshd_config"; exit 1; }
-  elif grep -q "^Port[[:space:]]*$" "$sshd_config" || grep -q "^Port[[:space:]]*[^0-9]" "$sshd_config"; then
-    echo "[$(date)] Invalid or empty Port directive found in $sshd_config, setting to Port $SSH_PORT" >> "$LOGFILE"
-    sed -i "s/^Port[[:space:]]*.*/Port $SSH_PORT/" "$sshd_config" || { echo "Error: Failed to fix invalid Port in $sshd_config"; exit 1; }
-  elif grep -q "^Port " "$sshd_config"; then
-    sed -i "s/^Port .*/Port $SSH_PORT/" "$sshd_config" || { echo "Error: Failed to set SSH port in $sshd_config"; exit 1; }
-  elif grep -q "^#Port " "$sshd_config"; then
-    sed -i "s/^#Port .*/Port $SSH_PORT/" "$sshd_config" || { echo "Error: Failed to set SSH port in $sshd_config"; exit 1; }
-  fi
-  echo "[$(date)] Configured SSH to listen on port $SSH_PORT" >> "$LOGFILE"
-
-  # Test SSH configuration
-  if ! /usr/sbin/sshd -t &>/tmp/sshd_test_output; then
-    echo "Error: Invalid SSH configuration in $sshd_config" | tee -a "$LOGFILE"
-    cat /tmp/sshd_test_output >> "$LOGFILE"
-    echo "Restoring backup configuration" | tee -a "$LOGFILE"
-    mv "${sshd_config}.bak" "$sshd_config" || { echo "Error: Failed to restore $sshd_config backup"; exit 1; }
-    exit 1
-  fi
-  rm -f /tmp/sshd_test_output
-  echo "[$(date)] SSH configuration test passed" >> "$LOGFILE"
-
-  # Check if port is in use
-  if command -v ss >/dev/null 2>&1; then
-    if ss -tuln | grep -q ":$SSH_PORT "; then
-      echo "Warning: Port $SSH_PORT is already in use by another process" | tee -a "$LOGFILE"
-      echo "Please choose a different port or stop the conflicting service" | tee -a "$LOGFILE"
-      exit 1
-    fi
-  elif command -v netstat >/dev/null 2>&1; then
-    if netstat -tuln | grep -q ":$SSH_PORT "; then
-      echo "Warning: Port $SSH_PORT is already in use by another process" | tee -a "$LOGFILE"
-      echo "Please choose a different port or stop the conflicting service" | tee -a "$LOGFILE"
-      exit 1
-    fi
-  else
-    echo "Error: Neither ss nor netstat is installed. Please install one to check port usage." | tee -a "$LOGFILE"
-    exit 1
-  fi
-
-  # Restart SSH service
-  retry_command "systemctl restart ssh" || { echo "Error: Failed to restart SSH service"; exit 1; }
-  echo "[$(date)] Restarted SSH service" >> "$LOGFILE"
-}
-
 # Update and upgrade system
 update_system() {
   retry_command "apt-get update"
@@ -201,11 +127,10 @@ check_root
 setup_sudo
 prompt_for_username
 create_user
-configure_ssh_port
 update_system
 
 echo "Setup complete for admin user '$USERNAME'."
-echo "- SSH access: ssh $USERNAME@10.0.0.13 -p $SSH_PORT"
+echo "- SSH access: ssh $USERNAME@10.0.0.13"
 echo "- Proxmox VE web interface: https://10.0.0.13:8006"
 if [[ $NO_REBOOT -eq 0 ]]; then
   read -t 60 -p "Reboot now? (y/n) [Timeout in 60s]: " REBOOT_CONFIRMATION
@@ -218,4 +143,4 @@ if [[ $NO_REBOOT -eq 0 ]]; then
 else
   echo "Reboot skipped due to --no-reboot flag. Please reboot manually."
 fi
-echo "[$(date)] Completed proxmox_create_admin_user.sh" >> "$LOGFILE"
+echo "[$(date)] Completed phoenix_create_admin_user.sh" >> "$LOGFILE"
