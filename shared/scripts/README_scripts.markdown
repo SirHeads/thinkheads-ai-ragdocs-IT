@@ -67,7 +67,7 @@ Before running the scripts, ensure that you have the following:
 7. **Run the Scripts in Order**:
    - Configure repositories:
      ```bash
-     /usr/local/bin/phoenix_proxmox_install_config.sh
+     /usr/local/bin/phoenix_proxmox_initial_config.sh
      ```
    - Install NVIDIA driver:
      ```bash

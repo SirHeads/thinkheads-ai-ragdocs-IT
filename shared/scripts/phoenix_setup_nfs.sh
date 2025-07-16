@@ -2,7 +2,7 @@
 
 # phoenix_setup_nfs.sh
 # Installs and configures NFS server and firewall for Proxmox setup
-# Version: 1.0.1
+# Version: 1.0.3
 # Author: Heads, Grok, Devstral
 # Usage: ./phoenix_setup_nfs.sh
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -143,12 +143,16 @@ verify_nfs() {
 
 # Configure firewall for NFS
 configure_firewall_nfs() {
-    echo "Configuring firewall for NFS..."
-    ufw allow from "$NFS_SUBNET" to any port 111 proto tcp || { echo "Failed to set firewall rule for RPC"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 2049 proto tcp || { echo "Failed to set firewall rule for NFS"; exit 1; }
-    ufw allow from 127.0.0.1 to any port 2049 proto tcp || { echo "Failed to set firewall rule for NFS localhost"; exit 1; }
-    ufw enable || { echo "Failed to enable firewall"; exit 1; }
-    ufw status | grep -E "111|2049" || { echo "Failed to verify NFS firewall rules"; exit 1; }
+    echo "Configuring firewall for NFS, SSH, and Proxmox UI..." | tee -a "$LOGFILE"
+    ufw allow from "$NFS_SUBNET" to any port 111 proto tcp || { echo "Failed to set firewall rule for RPC" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from "$NFS_SUBNET" to any port 2049 proto tcp || { echo "Failed to set firewall rule for NFS" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 127.0.0.1 to any port 2049 proto tcp || { echo "Failed to set firewall rule for NFS localhost" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 10.0.0.0/24 to any port 22 proto tcp || { echo "Failed to set firewall rule for SSH from 10.0.0.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 192.168.1.0/24 to any port 22 proto tcp || { echo "Failed to set firewall rule for SSH from 192.168.1.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 10.0.0.0/24 to any port 8006 proto tcp || { echo "Failed to set firewall rule for Proxmox UI from 10.0.0.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 192.168.1.0/24 to any port 8006 proto tcp || { echo "Failed to set firewall rule for Proxmox UI from 192.168.1.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw enable || { echo "Failed to enable firewall" | tee -a "$LOGFILE"; exit 1; }
+    ufw status | grep -E "111|2049|22|8006" || { echo "Failed to verify firewall rules" | tee -a "$LOGFILE"; exit 1; }
 }
 
 # Main execution

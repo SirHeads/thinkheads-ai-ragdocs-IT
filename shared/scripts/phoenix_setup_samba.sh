@@ -2,7 +2,7 @@
 
 # phoenix_setup_samba.sh
 # Installs and configures Samba server, user, and firewall for Proxmox setup
-# Version: 1.0.2
+# Version: 1.0.4
 # Author: Heads, Grok, Devstral
 # Usage: ./phoenix_setup_samba.sh
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -16,7 +16,6 @@ source /usr/local/bin/common.sh || { echo "Error: Failed to source common.sh"; e
 
 # Constants
 DEFAULT_SUBNET="10.0.0.0/24" # Default network subnet
-LOGFILE="/var/log/proxmox_setup.log"
 
 # Ensure script runs as root
 check_root() {
@@ -28,6 +27,7 @@ check_root() {
 
 # Initialize logging
 setup_logging() {
+    # Use LOGFILE from common.sh
     touch "$LOGFILE" || { echo "Error: Cannot create log file $LOGFILE"; exit 1; }
     exec 1> >(tee -a "$LOGFILE")
     exec 2>&1
@@ -57,14 +57,20 @@ install_prerequisites() {
 
 # Configure firewall for Samba, SSH, and Proxmox UI
 configure_firewall_samba() {
-    echo "Configuring firewall for Samba, SSH, and Proxmox UI..."
-    ufw allow from "$NFS_SUBNET" to any port 137 proto udp || { echo "Failed to set firewall rule for Samba UDP 137"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 138 proto udp || { echo "Failed to set firewall rule for Samba UDP 138"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 139 proto tcp || { echo "Failed to set firewall rule for Samba TCP 139"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 445 proto tcp || { echo "Failed to set firewall rule for Samba TCP 445"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 22 proto tcp || { echo "Failed to set firewall rule for SSH"; exit 1; }
-    ufw allow from "$NFS_SUBNET" to any port 8006 proto tcp || { echo "Failed to set firewall rule for Proxmox UI"; exit 1; }
-    ufw status | grep -E "137|138|139|445|22|8006" || { echo "Failed to verify firewall rules"; exit 1; }
+    echo "Configuring firewall for Samba, SSH, and Proxmox UI..." | tee -a "$LOGFILE"
+    ufw allow from "$NFS_SUBNET" to any port 137 proto udp || { echo "Failed to set firewall rule for Samba UDP 137" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from "$NFS_SUBNET" to any port 138 proto udp || { echo "Failed to set firewall rule for Samba UDP 138" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from "$NFS_SUBNET" to any port 139 proto tcp || { echo "Failed to set firewall rule for Samba TCP 139" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from "$NFS_SUBNET" to any port 445 proto tcp || { echo "Failed to set firewall rule for Samba TCP 445" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 127.0.0.1 to any port 137 proto udp || { echo "Failed to set firewall rule for Samba UDP 137 from localhost" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 127.0.0.1 to any port 138 proto udp || { echo "Failed to set firewall rule for Samba UDP 138 from localhost" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 127.0.0.1 to any port 139 proto tcp || { echo "Failed to set firewall rule for Samba TCP 139 from localhost" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 127.0.0.1 to any port 445 proto tcp || { echo "Failed to set firewall rule for Samba TCP 445 from localhost" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 10.0.0.0/24 to any port 22 proto tcp || { echo "Failed to set firewall rule for SSH from 10.0.0.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 192.168.1.0/24 to any port 22 proto tcp || { echo "Failed to set firewall rule for SSH from 192.168.1.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 10.0.0.0/24 to any port 8006 proto tcp || { echo "Failed to set firewall rule for Proxmox UI from 10.0.0.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw allow from 192.168.1.0/24 to any port 8006 proto tcp || { echo "Failed to set firewall rule for Proxmox UI from 192.168.1.0/24" | tee -a "$LOGFILE"; exit 1; }
+    ufw status | grep -E "137|138|139|445|22|8006" || { echo "Failed to verify firewall rules" | tee -a "$LOGFILE"; exit 1; }
 }
 
 # Prompt for SMB user and password
@@ -85,7 +91,7 @@ prompt_for_smb_credentials() {
 
 # Configure Samba user
 configure_samba_user() {
-    echo "Configuring Samba user $SMB_USER..."
+    echo "Configuring Samba user $SMB_USER..." | tee -a "$LOGFILE"
     if ! id "$SMB_USER" > /dev/null 2>&1; then
         useradd -M -s /sbin/nologin "$SMB_USER" || {
             echo "Failed to create Samba user $SMB_USER"
@@ -105,14 +111,14 @@ configure_samba_user() {
 
 # Configure Samba server
 configure_samba() {
-    echo "Configuring Samba server..."
+    echo "Configuring Samba server..." | tee -a "$LOGFILE"
     cat << EOF > /etc/samba/smb.conf
 [global]
    workgroup = WORKGROUP
    server signing = mandatory
    security = user
    map to guest = never
-   interfaces = vmbr0
+   interfaces = vmbr0 lo
    bind interfaces only = yes
 
 # Samba shares will be configured in phoenix_setup_zfs_datasets.sh
@@ -123,7 +129,7 @@ EOF
 
 # Verify Samba services and responsiveness
 verify_samba() {
-    echo "Verifying Samba services and responsiveness..."
+    echo "Verifying Samba services and responsiveness..." | tee -a "$LOGFILE"
     # Check if services are running
     for service in smbd nmbd; do
         if ! systemctl is-active --quiet "$service"; then
@@ -156,7 +162,7 @@ verify_samba() {
     done
 
     # Test Samba responsiveness with a temporary share
-    echo "Creating temporary Samba share for testing..."
+    echo "Creating temporary Samba share for testing..." | tee -a "$LOGFILE"
     mkdir -p /tmp/samba-test
     chown "$SMB_USER":"$SMB_USER" /tmp/samba-test
     chmod 755 /tmp/samba-test
@@ -181,7 +187,7 @@ EOF
         exit 1
     fi
 
-    echo "Testing Samba share listing..."
+    echo "Testing Samba share listing..." | tee -a "$LOGFILE"
     smbclient -L //localhost -U "$SMB_USER%$TEST_SMB_PASSWORD" | grep -q samba-test || {
         echo "Error: Failed to list temporary Samba share"
         rm -rf /tmp/samba-test /tmp/samba-test-file
@@ -191,7 +197,7 @@ EOF
     }
     echo "Temporary Samba share listed successfully"
 
-    echo "Testing Samba file upload..."
+    echo "Testing Samba file upload..." | tee -a "$LOGFILE"
     echo "test" > /tmp/samba-test-file
     chown "$SMB_USER":"$SMB_USER" /tmp/samba-test-file
     chmod 644 /tmp/samba-test-file
