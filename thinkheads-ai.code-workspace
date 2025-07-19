@@ -9,10 +9,6 @@
 		{
 			"name": "thinkheads-docs-private",
 			"path": "../thinkheads-docs-private"
-		},
-		{
-			"name": "thinkheads-docs-private-1",
-			"path": "../thinkheads-docs-private-1"
 		}
 	],
 	"settings": {}
