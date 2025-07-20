@@ -2,7 +2,7 @@
 
 # phoenix_setup_zfs_datasets.sh
 # Configures ZFS datasets for quickOS and fastData pools and sets up NFS/Samba shares
-# Version: 1.0.10
+# Version: 1.0.13
 # Author: Heads, Grok, Devstral
 # Usage: ./phoenix_setup_zfs_datasets.sh
 # Note: Configure log rotation for $LOGFILE using /etc/logrotate.d/proxmox_setup
@@ -92,8 +92,10 @@ configure_quickOS_datasets() {
                 exit 1
             }
         fi
-        chmod 755 /quickOS/$dataset
-        chown root:root /quickOS/$dataset
+        groupadd -f sambashare
+        usermod -aG sambashare $SMB_USER
+        chmod 775 /quickOS/$dataset
+        chown root:sambashare /quickOS/$dataset
         zfs set sharenfs=off quickOS/$dataset || { echo "Error: Failed to set sharenfs=off for quickOS/$dataset"; exit 1; }
     done
     # Update NFS exports
@@ -131,19 +133,18 @@ configure_fastData_datasets() {
                 exit 1
             }
         fi
-        chmod 755 /fastData/$dataset
-        chown root:root /fastData/$dataset
+        groupadd -f sambashare
+        usermod -aG sambashare $SMB_USER
+        chmod 775 /fastData/$dataset
+        chown root:sambashare /fastData/$dataset
         zfs set sharenfs=off fastData/$dataset || { echo "Error: Failed to set sharenfs=off for fastData/$dataset"; exit 1; }
     done
     # Update NFS exports
-    grep -v "/fastData/" /etc/exports >> /tmp/exports.tmp || true
-    for dataset in shared-test-data shared-test-data-sync shared-backups shared-bulk-data; do
+    grep -v "/fastData/" /etc/exports > /tmp/exports.tmp || true
+    for dataset in shared-test-data shared-test-data-sync shared-backups shared-iso shared-bulk-data; do
         # Use sync for shared-test-data-sync for database workloads
         sync_option=$([[ $dataset == shared-test-data-sync ]] && echo "sync" || echo "async")
         echo "/fastData/$dataset $NFS_SUBNET(rw,$sync_option,no_subtree_check,no_root_squash)" >> /tmp/exports.tmp
-    done
-    echo "/fastData/shared-iso $NFS_SUBNET(ro,async,no_subtree_check,no_root_squash)" >> /tmp/exports.tmp
-    for dataset in shared-test-data shared-test-data-sync shared-backups shared-iso shared-bulk-data; do
         if ! grep -q "\[$dataset\]" /etc/samba/smb.conf; then
             cat << EOF >> /etc/samba/smb.conf
 [$dataset]
@@ -166,8 +167,8 @@ configure_proxmox_storage() {
     echo "Registering datasets with Proxmox storage..." | tee -a "$LOGFILE"
     # Ensure /mnt/pve exists and is writable
     mkdir -p /mnt/pve || { echo "Error: Failed to create /mnt/pve"; exit 1; }
-    chmod 755 /mnt/pve
-    chown root:root /mnt/pve
+    chmod 775 /mnt/pve
+    chown root:sambashare /mnt/pve
     if mountpoint -q /mnt/pve; then
         umount /mnt/pve 2>/dev/null || true
     fi
@@ -189,7 +190,7 @@ configure_proxmox_storage() {
             content="backup,iso"
         else
             pool="fastData"
-            content=$([[ $dataset == shared-iso ]] && echo "iso" || echo "backup,iso")
+            content=$([[ $dataset == shared-iso ]] && echo "iso,vztmpl" || echo "backup,iso")
         fi
         if ! grep -q "nfs: $dataset" /etc/pve/storage.cfg; then
             mkdir -p /mnt/pve/$dataset || { echo "Error: Failed to create /mnt/pve/$dataset"; exit 1; }
@@ -222,7 +223,7 @@ verify_nfs_exports() {
     exportfs -v | tee -a "$LOGFILE"
     for dataset in quickOS/shared-prod-data quickOS/shared-prod-data-sync fastData/shared-test-data fastData/shared-test-data-sync fastData/shared-backups fastData/shared-iso fastData/shared-bulk-data; do
         mountpoint="/${dataset/\//\/}"
-        if ! exportfs -v | grep "$mountpoint.*$NFS_SUBNET" > /dev/null; then
+        if ! exportfs -v | grep "$mountpoint" > /dev/null; then
             echo "Error: NFS export for $mountpoint not found or misconfigured" | tee -a "$LOGFILE"
             exit 1
         fi
@@ -251,16 +252,13 @@ verify_datasets() {
                 rm -rf "/mnt/nfs-test-$dataset"
                 exit 1
             }
-            # Skip write test for read-only share
-            if [[ $dataset != fastData/shared-iso ]]; then
-                touch "/mnt/nfs-test-$dataset/testfile" || {
-                    echo "Error: Failed to write to NFS mount $mountpoint"
-                    umount "/mnt/nfs-test-$dataset"
-                    rm -rf "/mnt/nfs-test-$dataset"
-                    exit 1
-                }
-                rm "/mnt/nfs-test-$dataset/testfile"
-            fi
+            touch "/mnt/nfs-test-$dataset/testfile" || {
+                echo "Error: Failed to write to NFS mount $mountpoint"
+                umount "/mnt/nfs-test-$dataset"
+                rm -rf "/mnt/nfs-test-$dataset"
+                exit 1
+            }
+            rm "/mnt/nfs-test-$dataset/testfile"
             umount "/mnt/nfs-test-$dataset"
             rm -rf "/mnt/nfs-test-$dataset"
             echo "NFS access to $mountpoint successful"
@@ -271,13 +269,14 @@ verify_datasets() {
             echo "test" > /tmp/samba-test-file
             chown "$SMB_USER":"$SMB_USER" /tmp/samba-test-file
             chmod 644 /tmp/samba-test-file
-            retry_command "smbclient //localhost/$dataset_name $SMB_PASSWORD -U $SMB_USER -c 'put /tmp/samba-test-file testfile'" || {
-                echo "Error: Failed to upload to Samba share $dataset_name"
+            echo "Enter Samba password for $SMB_USER to test $dataset_name:"
+            smbclient //localhost/$dataset_name -U $SMB_USER -c 'put /tmp/samba-test-file testfile' || {
+                echo "Error: Failed to upload to Samba share $dataset_name" | tee -a "$LOGFILE"
                 rm -rf /tmp/samba-test-file
                 exit 1
             }
             rm -rf /tmp/samba-test-file
-            echo "Samba access to $dataset_name successful"
+            echo "Samba access to $dataset_name successful" | tee -a "$LOGFILE"
         fi
     done
 }
