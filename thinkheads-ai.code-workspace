@@ -9,6 +9,9 @@
 		{
 			"name": "thinkheads-docs-private",
 			"path": "../thinkheads-docs-private"
+		},
+		{
+			"path": "../phoenix-scripts"
 		}
 	],
 	"settings": {}
