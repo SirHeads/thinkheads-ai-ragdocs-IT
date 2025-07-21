@@ -12,7 +12,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
 - **Goals**:
   - Maximize performance for `quickOS` (VMs, LXC, databases, LLM models).
   - Use `fastData` for less critical, high-capacity storage.
-  - Support frequent snapshots for recovery and cloning.
   - Minimize NVMe wear, especially on `quickOS` (mirrored).
   - Isolate database sync writes and optimize VM vs. LXC I/O patterns.
   - Leverage ARC caching for read performance.
@@ -27,7 +26,7 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
   - Set `compression=lz4` for all datasets to reduce I/O and write amplification.
   - Set `atime=off` to minimize unnecessary writes.
 - **ARC Caching**:
-  - Limit ARC to ~48GB (`zfs_arc_max=51539607552`) to balance with VM/LXC RAM needs (96GB total).
+  - Limit ARC to ~30GB to balance with VM/LXC RAM needs (96GB total).
   - Prioritize read caching for VM/LXC disks and shared storage.
 
 ### 2. fastData (4TB Single NVMe)
@@ -50,8 +49,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `sync=standard` (async writes) for performance, as VM OS disks don’t require strict consistency.
      - `quota=800G` (thin-provisioned) to reserve space for snapshots and balance with other datasets.
      - Create sub-datasets per VM (e.g., `quickOS/vm-disks/vm1`) for snapshot granularity.
-   - **Snapshots**: Daily snapshots for recovery.
-   - **Backups**: Proxmox backups to `fastData/shared-backups`.
    - **Mounting**: Used as block storage in Proxmox (ZFS backend).
    - **Content**: VM OS, application binaries, minimal configuration. Application data stored in `shared-prod-data` or `shared-prod-data-sync`.
 
@@ -63,8 +60,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `sync=standard` (async writes) for performance, as LXC OS disks don’t require strict consistency.
      - `quota=600G` (thin-provisioned) to reserve space for snapshots and balance with other datasets.
      - Create sub-datasets per LXC (e.g., `quickOS/lxc-disks/lxc1`) for snapshot granularity.
-   - **Snapshots**: Daily snapshots for recovery.
-   - **Backups**: Proxmox backups to `fastData/shared-backups`.
    - **Mounting**: Used as block storage in Proxmox (ZFS backend).
    - **Content**: LXC OS, application binaries, minimal configuration. Application data stored in `shared-prod-data` or `shared-prod-data-sync`.
 
@@ -75,8 +70,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `compression=lz4` for performance and NVMe lifespan.
      - `sync=standard` (async writes) for high throughput.
      - `quota=400G` (thin-provisioned) to balance with other datasets.
-   - **Snapshots**: Daily snapshots for recovery and cloning to `fastData/shared-test-data`.
-   - **Backups**: Snapshots backed up to `fastData/shared-backups` via `zfs send/receive`.
    - **Mounting**: NFS (`noatime`, `async`) for VMs, bind-mounted (`discard`, `noatime`) for LXC.
    - **Content**: LLM model files, application data, non-critical files. No database data.
 
@@ -88,8 +81,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `sync=always` to ensure data consistency (no SLOG, writes hit main NVMe drives).
      - `quota=100G` (thin-provisioned) to limit database growth.
      - Optional sub-datasets (e.g., `shared-prod-data-sync/postgres`) for specific databases.
-   - **Snapshots**: Hourly snapshots for point-in-time recovery.
-   - **Backups**: Snapshots backed up to `fastData/shared-backups` via `zfs send/receive`.
    - **Mounting**: NFS (`sync`, `noatime`) for VMs, bind-mounted (`discard`, `noatime`) for LXC.
    - **Content**: Database data directories (e.g., `/var/lib/postgresql`), transaction logs, Redis AOF files.
 
@@ -101,8 +92,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `compression=lz4` for performance.
      - `sync=standard` (async writes, test data is non-critical).
      - `quota=500G` (thin-provisioned) to match production data size.
-   - **Snapshots**: Optional, infrequent (e.g., weekly) for test environment recovery.
-   - **Backups**: Not typically needed (ephemeral test data).
    - **Mounting**: NFS (`noatime`, `async`) for VMs, bind-mounted (`discard`, `noatime`) for LXC.
    - **Content**: Test copies of production data (databases, LLM models).
 
@@ -113,8 +102,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `compression=zstd` for maximum space savings.
      - `sync=standard` (async writes, backups don’t require strict consistency).
      - `quota=2T` (thin-provisioned) for multiple backup sets.
-   - **Snapshots**: Not needed (Proxmox manages retention).
-   - **Backups**: Primary backup target.
    - **Mounting**: Proxmox backup storage (directory or ZFS backend).
    - **Content**: Proxmox `.vma` files, ZFS snapshot backups.
 
@@ -125,8 +112,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `compression=lz4` for space savings.
      - `sync=standard` (async writes, ISOs are static).
      - `quota=100G` (thin-provisioned) for typical ISO sizes.
-   - **Snapshots**: Rarely needed (static data).
-   - **Backups**: Not needed.
    - **Mounting**: Proxmox ISO storage (directory or NFS).
    - **Content**: ISO images.
 
@@ -137,8 +122,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
      - `compression=lz4` for performance and space savings.
      - `sync=standard` (async writes, non-critical data).
      - `quota=1.4T` (thin-provisioned) for remaining space.
-   - **Snapshots**: Infrequent (e.g., weekly) due to large data size.
-   - **Backups**: Optional backups to `shared-backups`.
    - **Mounting**: NFS (`noatime`, `async`) for VMs, bind-mounted (`discard`, `noatime`) for LXC.
    - **Content**: Media, logs, non-critical files.
 
@@ -151,18 +134,6 @@ This document outlines the requirements for configuring two ZFS pools (`quickOS`
   - Isolate sync writes to `shared-prod-data-sync` to minimize wear on `quickOS` NVMe drives (mirrored, doubles writes).
   - Monitor NVMe wear with `smartctl` (e.g., wear level, write counts).
 - **Firmware**: Ensure NVMe firmware is up-to-date for optimal TRIM and I/O handling.
-
-### Snapshots and Backups
-- **Snapshot Schedules**:
-  - `vm-disks`, `lxc-disks`: Daily snapshots for recovery.
-  - `shared-prod-data-sync`: Hourly snapshots for database recovery.
-  - `shared-prod-data`: Daily snapshots for LLM models and application data.
-  - `shared-test-data`: Weekly snapshots (optional).
-  - `shared-backups`, `shared-iso`, `shared-bulk-data`: Snapshots rarely needed.
-- **Cloning**: Clone snapshots from `shared-prod-data` or `shared-prod-data-sync` to `fastData/shared-test-data` for test environments.
-- **Backups**:
-  - Proxmox backups of VMs/LXC to `fastData/shared-backups`.
-  - ZFS snapshot backups (`zfs send/receive`) from `quickOS` to `fastData/shared-backups`.
 
 ### Proxmox Integration
 - **Storage Backends**:
