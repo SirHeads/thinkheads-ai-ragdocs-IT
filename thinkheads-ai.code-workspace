@@ -16,10 +16,6 @@
 		{
 			"name": "phoenix_hypervisor_scripts",
 			"path": "../phoenix_hypervisor_scripts"
-		},
-		{
-			"name": "thinkheads-docs-private-2",
-			"path": "../thinkheads-docs-private-2"
 		}
 	],
 	"settings": {}
