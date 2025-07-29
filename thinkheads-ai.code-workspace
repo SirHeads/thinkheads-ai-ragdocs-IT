@@ -12,6 +12,10 @@
 		},
 		{
 			"path": "../phoenix-scripts"
+		},
+		{
+			"name": "phoenix_hypervisor_scripts",
+			"path": "../phoenix_hypervisor_scripts"
 		}
 	],
 	"settings": {}
